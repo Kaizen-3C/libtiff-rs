@@ -2,9 +2,9 @@
 # Rebuild the C reference from the UPSTREAM libtiff 4.7.0 tarball and verify the differential
 # from first principles:
 #   1. download tiff-4.7.0.tar.gz (or use $TIFF_TARBALL), pin sha256
-#   2. cref/assemble.py slices the VERBATIM LZW decoder bodies (LZWSetupDecode / LZWPreDecode /
-#      LZWDecode + the code-table state and bit-reader macros) from tif_lzw.c and stitches them
-#      with cref/_prelude.c (the minimal TIFF shim) and cref/_driver.c (the op-script driver)
+#   2. cref/assemble.py slices the VERBATIM decoder bodies (PackBits / Thunder / NeXT and the
+#      LZW decoder) from tif_packbits.c / tif_thunder.c / tif_next.c / tif_lzw.c and stitches
+#      them with cref/_prelude.c (the minimal TIFF shim) and cref/_driver.c (dispatching driver)
 #   3. compile, run over tests/vectors/tiff_inputs.txt, byte-compare against the Rust
 #      differential_driver and the checked-in golden.
 # Exits nonzero on any mismatch.
@@ -28,7 +28,7 @@ cp "$TARBALL" "$BUILD/_tiff.tgz"
 tar xzf "$BUILD/_tiff.tgz" -C "$BUILD"
 UP="$BUILD/tiff-4.7.0/libtiff"
 
-echo "== assembling legacy.c from upstream tif_lzw.c (verbatim LZW decoder + shim + driver)"
+echo "== assembling legacy.c from upstream tif_*.c (4 verbatim decoders + shim + driver)"
 TIFF_SRC="$UP" OUT="$BUILD" python cref/assemble.py
 
 echo "== compiling C reference ($CC)"
@@ -46,13 +46,13 @@ gold=tests/vectors/tiff_golden.txt
 "$RUST_DRV"          < "$inp" | tr -d '\r' > "$BUILD/tiff_rs.out"
 tr -d '\r' < "$gold" > "$BUILD/tiff_gold.norm"
 if cmp -s "$BUILD/tiff_c.out" "$BUILD/tiff_rs.out"; then
-  echo "OK  tiff-lzw: upstream-built C == Rust ($(wc -l < "$inp") cases)"
+  echo "OK  tiff: upstream-built C == Rust ($(wc -l < "$inp") cases)"
 else
-  echo "FAIL tiff-lzw: upstream-built C != Rust"; fail=1
+  echo "FAIL tiff: upstream-built C != Rust"; fail=1
 fi
 if cmp -s "$BUILD/tiff_c.out" "$BUILD/tiff_gold.norm"; then
-  echo "OK  tiff-lzw: upstream-built C == checked-in golden"
+  echo "OK  tiff: upstream-built C == checked-in golden"
 else
-  echo "FAIL tiff-lzw: upstream-built C != checked-in golden"; fail=1
+  echo "FAIL tiff: upstream-built C != checked-in golden"; fail=1
 fi
 exit $fail

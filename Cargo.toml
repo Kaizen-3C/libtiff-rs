@@ -3,11 +3,11 @@ name = "libtiff-rs"
 version = "0.1.0"
 edition = "2021"
 license-file = "LICENSE"
-description = "Memory-safe Rust port of the libtiff 4.7.0 LZW decoder (tif_lzw.c decode path), differentially certified against the upstream C build."
+description = "Memory-safe Rust port of the libtiff 4.7.0 codec-core decoders (PackBits, Thunder, NeXT, LZW), differentially certified against the upstream C build."
 repository = "https://github.com/Kaizen-3C/libtiff-rs"
 authors = ["Sam Leffler / Silicon Graphics / the libtiff contributors (original C implementation)", "Kaizen-3C intent-engine (Rust port)"]
 categories = ["multimedia::images", "parser-implementations", "compression"]
-keywords = ["tiff", "libtiff", "lzw", "decoder", "codec"]
+keywords = ["tiff", "libtiff", "lzw", "packbits", "codec"]
 
 [dependencies]
 

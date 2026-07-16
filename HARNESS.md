@@ -4,17 +4,17 @@ How the correctness claim is produced, so it can be verified without trusting th
 
 ## The claim
 
-The Rust port and upstream libtiff 4.7.0, driven by the same op-script driver over the 261-case
+The Rust port and upstream libtiff 4.7.0, driven by the same op-script driver over the 538-case
 envelope in `tests/vectors/`, produce **byte-identical stdout**.
 
 ## How the C reference is built (`scripts/regen_goldens.sh`)
 
 1. Download `tiff-4.7.0.tar.gz` from download.osgeo.org and verify sha256
    `67160e3457365ab96c5b3286a0903aa6e78bdc44c4bc737d2e486bcecb6ba976`.
-2. `cref/assemble.py` slices the **verbatim** LZW decoder from the upstream `tif_lzw.c` by
-   pinned line range: the code-table constants/state (`code_t`, `LZWCodecState`, `CSIZE`,
-   `BITS_MIN/MAX`, `CODE_*`), `LZWSetupDecode`, `LZWPreDecode`, the `GetNextData`/
-   `GetNextCodeLZW` bit-reader macros, and `LZWDecode`.
+2. `cref/assemble.py` slices the **verbatim** decoder bodies from the upstream sources by pinned
+   line range: `PackBitsDecode` (tif_packbits.c), `ThunderDecode` + its tables (tif_thunder.c),
+   `NeXTDecode` + its macros (tif_next.c), and the LZW decoder (`LZWSetupDecode`/`LZWPreDecode`/
+   `LZWDecode` + code-table state + bit-reader macros, tif_lzw.c).
 3. It prepends `cref/_prelude.c` — the minimal `TIFF` struct (only the fields the decode path
    touches), the `WordType`/`SIZEOF_WORDTYPE` typedefs, and small allocator/predictor/
    diagnostic stubs — and appends `cref/_driver.c`, the op-script driver. **The prelude/shim is
@@ -28,8 +28,9 @@ code, not taken on faith.
 
 ## The op-script format
 
-Each stdin line is `<occ> <hex>`: the requested output byte count and the raw LZW-compressed
-input as hex. The driver decodes and prints:
+Each stdin line is a codec-tagged op — `P <occ> <hex>` (PackBits), `T <maxpixels> <hex>`
+(Thunder), `N <occ> <scanline> <iw> <hex>` (NeXT), `L <occ> <hex>` (LZW). The driver dispatches
+to the matching decoder and prints:
 
 - `R <ret> <occ> <fnv> <rawcc>` — decoder return code (1 ok / 0 error), requested size, FNV-1a
   of the decoded output buffer (the decoder zeroes the tail on short/erroneous input, so the
@@ -40,8 +41,8 @@ Full op semantics are documented at the top of `cref/_driver.c`.
 
 ## Corpus validity
 
-Valid LZW streams in the envelope are produced by a TIFF-LZW encoder that was verified to
-round-trip through the C decoder (encode → C-decode → original) before the corpus was frozen,
+Valid streams (LZW, PackBits) are produced by encoders verified to round-trip through the C
+decoders (encode → C-decode → original) before the corpus was frozen,
 so the "valid" cases are genuinely well-formed and the "adversarial" cases (truncation,
 bit-flips into undefined codes, missing EOI, fuzz) genuinely exercise the reject/bounds paths.
 

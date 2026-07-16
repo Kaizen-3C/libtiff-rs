@@ -28,7 +28,7 @@ fn normalize(s: &str) -> String {
 }
 
 #[test]
-fn lzw_envelope_matches_c_reference() {
+fn codec_envelope_matches_c_reference() {
     let got = normalize(&run_driver(include_str!("vectors/tiff_inputs.txt")));
     let want = normalize(include_str!("vectors/tiff_golden.txt"));
     if got != want {
