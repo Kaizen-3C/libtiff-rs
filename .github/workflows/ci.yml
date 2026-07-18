@@ -29,3 +29,20 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y clang
       - name: regenerate goldens from upstream and byte-compare
         run: bash scripts/regen_goldens.sh
+
+  fuzz-smoke:
+    name: differential fuzz smoke (60s, cheap CI gate — see FUZZING.md for deep runs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: install clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: populate the pinned libtiff tarball (build.rs needs cref/_build/tiff-4.7.0)
+        run: bash scripts/regen_goldens.sh
+      - name: seed the corpus from the curated envelope
+        run: python3 fuzz/seed_corpus.py
+      - name: fuzz for 60s — any crash or C/Rust divergence fails the job
+        run: cargo +nightly fuzz run differential -- -max_total_time=60 -max_len=4096 fuzz/corpus/differential

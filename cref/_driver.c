@@ -59,6 +59,14 @@ int main(void) {
             tmsize_t maxpixels = atol(strtok(NULL, " \t\r\n") ?: "0");
             tmsize_t n = load_hex(strtok(NULL, " \t\r\n"));
             if (maxpixels < 0) maxpixels = 0;
+            /* maxpixels tells ThunderDecode how many bytes of outbuf it may write
+               ((maxpixels+1)/2); clamp maxpixels itself (not just the buffer-size
+               computation below) so the two can never disagree -- an unclamped maxpixels
+               with a clamped outbuf allocation is a driver-only global-buffer-overflow
+               (found by the differential fuzz target; real libtiff callers always derive
+               both from the same source, so this was never reachable via a real TIFF, only
+               via this driver's own inconsistent clamping). */
+            if (maxpixels > 2 * (tmsize_t)sizeof(outbuf) - 1) maxpixels = 2 * (tmsize_t)sizeof(outbuf) - 1;
             outbytes = (maxpixels + 1) / 2;
             if (outbytes > (tmsize_t)sizeof(outbuf)) outbytes = sizeof(outbuf);
             tif.tif_rawdata = inbuf; tif.tif_rawdatasize = n; tif.tif_rawcp = inbuf; tif.tif_rawcc = n;
