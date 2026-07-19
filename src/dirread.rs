@@ -895,3 +895,229 @@ pub fn run_bytes_arr(data: &[u8]) -> String {
     };
     format_arr(read_dir_entry_byte_array(&ctx, ttype, tcount, &toffset))
 }
+
+// ============================================================================
+// Slice 4 — the u64-widening strip-offset/bytecount reader:
+// TIFFReadDirEntryLong8ArrayWithLimit over the Slice 3 read_dir_entry_array_with_limit core, with
+// the CheckRangeLong8* sign guards and a `maxcount` limit (the strip-count clamp). This is libtiff's
+// strip/tile geometry gateway — the tag-array integer-overflow -> under-allocation -> OOB surface
+// that feeds TIFFReadDirectory. Byte-offset reads (P1); guards verbatim (P2/P5); the count×typesize
+// overflow guard is the Slice 3 division-form (P2c). #![forbid(unsafe_code)].
+// ============================================================================
+
+/// One source element (`chunk`, `typesize` bytes, host order) widened to u64, mirroring the
+/// swab-then-CheckRangeLong8-then-widen of `TIFFReadDirEntryLong8ArrayWithLimit`. Signed source
+/// types are rejected (`Range`) when negative — u64 offsets/counts are non-negative by definition.
+fn widen_to_u64(swab: bool, ttype: u16, chunk: &[u8]) -> (DirEntryErr, u64) {
+    match ttype {
+        TIFF_BYTE => (DirEntryErr::Ok, chunk[0] as u64),
+        TIFF_SBYTE => {
+            let m = chunk[0] as i8;
+            if m < 0 {
+                (DirEntryErr::Range, 0)
+            } else {
+                (DirEntryErr::Ok, m as u64)
+            }
+        }
+        TIFF_SHORT => {
+            let mut v = u16::from_ne_bytes([chunk[0], chunk[1]]);
+            if swab {
+                v = v.swap_bytes();
+            }
+            (DirEntryErr::Ok, v as u64)
+        }
+        TIFF_SSHORT => {
+            let mut r = u16::from_ne_bytes([chunk[0], chunk[1]]);
+            if swab {
+                r = r.swap_bytes();
+            }
+            let m = r as i16;
+            if m < 0 {
+                (DirEntryErr::Range, 0)
+            } else {
+                (DirEntryErr::Ok, m as u64)
+            }
+        }
+        TIFF_LONG => {
+            let mut v = u32::from_ne_bytes(chunk[0..4].try_into().unwrap());
+            if swab {
+                v = v.swap_bytes();
+            }
+            (DirEntryErr::Ok, v as u64)
+        }
+        TIFF_SLONG => {
+            let mut r = u32::from_ne_bytes(chunk[0..4].try_into().unwrap());
+            if swab {
+                r = r.swap_bytes();
+            }
+            let m = r as i32;
+            if m < 0 {
+                (DirEntryErr::Range, 0)
+            } else {
+                (DirEntryErr::Ok, m as u64)
+            }
+        }
+        TIFF_LONG8 => {
+            let mut v = u64::from_ne_bytes(chunk[0..8].try_into().unwrap());
+            if swab {
+                v = v.swap_bytes();
+            }
+            (DirEntryErr::Ok, v)
+        }
+        TIFF_SLONG8 => {
+            let mut v = u64::from_ne_bytes(chunk[0..8].try_into().unwrap());
+            if swab {
+                v = v.swap_bytes();
+            }
+            if (v as i64) < 0 {
+                (DirEntryErr::Range, 0)
+            } else {
+                (DirEntryErr::Ok, v) // returns the (swabbed) bits, validated non-negative
+            }
+        }
+        _ => (DirEntryErr::Type, 0), // unreachable given the caller's type gate
+    }
+}
+
+/// `TIFFReadDirEntryLong8ArrayWithLimit`: fetch the value array (clamped to `maxcount`) and widen
+/// every element to u64, with per-element sign validation. Returns `(err, Some(values))` on success
+/// (`values.len() == min(tcount, maxcount)`), or `(err, None)` on failure / no data (`*value = 0`).
+pub fn read_dir_entry_long8_array_with_limit(
+    ctx: &Ctx,
+    ttype: u16,
+    tcount: u64,
+    toffset: &[u8; 8],
+    maxcount: u64,
+) -> (DirEntryErr, Option<Vec<u64>>) {
+    match ttype {
+        TIFF_BYTE | TIFF_SBYTE | TIFF_SHORT | TIFF_SSHORT | TIFF_LONG | TIFF_SLONG | TIFF_LONG8
+        | TIFF_SLONG8 => {}
+        _ => return (DirEntryErr::Type, None),
+    }
+    let (err, count, origdata) =
+        read_dir_entry_array_with_limit(ctx, ttype, tcount, toffset, 8, maxcount);
+    let origdata = match origdata {
+        Some(d) if err == DirEntryErr::Ok => d,
+        _ => return (err, None), // (err != Ok) || origdata == 0  ->  *value = 0
+    };
+    let typesize = data_width(ttype) as usize;
+    let mut out = Vec::with_capacity(count as usize);
+    for n in 0..count as usize {
+        let base = n * typesize;
+        let (e, v) = widen_to_u64(ctx.swab, ttype, &origdata[base..base + typesize]);
+        if e != DirEntryErr::Ok {
+            return (e, None); // C breaks the loop, frees both buffers, returns err
+        }
+        out.push(v);
+    }
+    (DirEntryErr::Ok, Some(out))
+}
+
+fn format_arr8(res: (DirEntryErr, Option<Vec<u64>>)) -> String {
+    use std::fmt::Write as _;
+    let (err, val) = res;
+    let mut out = String::new();
+    match val {
+        Some(v) if err == DirEntryErr::Ok => {
+            write!(out, "L 0 {}", v.len()).unwrap();
+            for x in &v {
+                write!(out, " {}", x).unwrap();
+            }
+            out.push('\n');
+        }
+        _ => {
+            writeln!(out, "L {} 0", err as i32).unwrap();
+        }
+    }
+    out.push_str(".\n");
+    out
+}
+
+/// Op-script line matching `cref/_driver_dir4.c`:
+/// `L <flags> <type> <count> <maxcount> <offsethex16> <filehex>` → the fetched u64 array. For cert.
+pub fn run_line_arr8(line: &str) -> String {
+    let line = match line.find('\0') {
+        Some(p) => &line[..p],
+        None => line,
+    };
+    let b = line.as_bytes();
+    if b.first() != Some(&b'L') {
+        return String::new();
+    }
+    let mut pos = 1;
+    let flags = match scan_uint(b, &mut pos) {
+        Some(v) => v as u32,
+        None => return String::new(),
+    };
+    let ttype = match scan_uint(b, &mut pos) {
+        Some(v) => v as u16,
+        None => return String::new(),
+    };
+    let tcount = match scan_uint(b, &mut pos) {
+        Some(v) => v,
+        None => return String::new(),
+    };
+    let maxcount = match scan_uint(b, &mut pos) {
+        Some(v) => v,
+        None => return String::new(),
+    };
+    while pos < b.len() && b[pos].is_ascii_whitespace() {
+        pos += 1;
+    }
+    if pos + 16 > b.len() {
+        return String::new();
+    }
+    let mut toffset = [0u8; 8];
+    for (i, slot) in toffset.iter_mut().enumerate() {
+        let hi = (b[pos + i * 2] as char).to_digit(16);
+        let lo = (b[pos + i * 2 + 1] as char).to_digit(16);
+        match (hi, lo) {
+            (Some(h), Some(l)) => *slot = (h * 16 + l) as u8,
+            _ => return String::new(),
+        }
+    }
+    pos += 16;
+    while pos < b.len() && b[pos].is_ascii_whitespace() {
+        pos += 1;
+    }
+    let file: Vec<u8> = b[pos..]
+        .chunks(2)
+        .map_while(|c| {
+            if c.len() == 2 {
+                Some(((c[0] as char).to_digit(16)? * 16 + (c[1] as char).to_digit(16)?) as u8)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let ctx = Ctx {
+        swab: flags & 1 != 0,
+        bigtiff: flags & 2 != 0,
+        file: &file,
+    };
+    format_arr8(read_dir_entry_long8_array_with_limit(
+        &ctx, ttype, tcount, &toffset, maxcount,
+    ))
+}
+
+/// Structured fuzz entry matching `cref/_fuzzlib_driver_dir4.c`:
+/// `[0]`=flags `[1..3]`=type(u16) `[3..11]`=count(u64) `[11..19]`=maxcount(u64) `[19..27]`=offset
+/// `[27..]`=file. `< 27` bytes → empty.
+pub fn run_bytes_arr8(data: &[u8]) -> String {
+    if data.len() < 27 {
+        return String::new();
+    }
+    let flags = data[0];
+    let ttype = u16::from_ne_bytes([data[1], data[2]]);
+    let tcount = u64::from_ne_bytes(data[3..11].try_into().unwrap());
+    let maxcount = u64::from_ne_bytes(data[11..19].try_into().unwrap());
+    let toffset: [u8; 8] = data[19..27].try_into().unwrap();
+    let ctx = Ctx {
+        swab: flags & 1 != 0,
+        bigtiff: flags & 2 != 0,
+        file: &data[27..],
+    };
+    format_arr8(read_dir_entry_long8_array_with_limit(
+        &ctx, ttype, tcount, &toffset, maxcount,
+    ))
+}
