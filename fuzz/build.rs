@@ -43,9 +43,20 @@ fn main() {
         .expect("run cref/assemble_fuzzlib_dir.py (needs python3 on PATH)");
     assert!(status_dir.success(), "assemble_fuzzlib_dir.py failed");
 
+    // TIFFFetchDirectory fuzzlib (Slice 2): reuse assemble_dir2.py with the fuzzlib driver.
+    let status_dir2 = Command::new("python3")
+        .arg(cref.join("assemble_dir2.py"))
+        .env("TIFF_SRC", &tiff_src)
+        .env("OUT", &out_dir)
+        .env("DRIVER", "_fuzzlib_driver_dir2.c")
+        .status()
+        .expect("run cref/assemble_dir2.py (fuzzlib variant)");
+    assert!(status_dir2.success(), "assemble_dir2.py (fuzzlib) failed");
+
     for f in [
         "_prelude.c", "_fuzzlib_driver.c", "assemble_fuzzlib.py",
         "_prelude_dir.c", "_fuzzlib_driver_dir.c", "assemble_fuzzlib_dir.py",
+        "_prelude_dir2.c", "_fuzzlib_driver_dir2.c", "assemble_dir2.py",
     ] {
         println!("cargo:rerun-if-changed={}", cref.join(f).display());
     }
@@ -66,4 +77,11 @@ fn main() {
         .flag("-g")
         .flag("-O1")
         .compile("tiff_fuzzlib_dir");
+    cc::Build::new()
+        .compiler("clang")
+        .file(Path::new(&out_dir).join("legacy_fuzzlib_dir2.c"))
+        .flag("-fsanitize=address,fuzzer-no-link")
+        .flag("-g")
+        .flag("-O1")
+        .compile("tiff_fuzzlib_dir2");
 }

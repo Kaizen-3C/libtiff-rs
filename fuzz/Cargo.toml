@@ -26,3 +26,10 @@ bench = false
 [[bin]]
 name = "differential_dir"
 path = "fuzz_targets/differential_dir.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "differential_dir2"
+path = "fuzz_targets/differential_dir2.rs"

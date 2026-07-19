@@ -374,3 +374,210 @@ pub fn run_line(line: &str) -> String {
     let (err, value) = read_dir_entry_byte(&ctx, &e);
     format!("R {} {}\n.\n", err as i32, value)
 }
+
+// ============================ Slice 2: TIFFFetchDirectory ============================
+
+/// Port of libtiff `TIFFFetchDirectory` (mapped path): parse the IFD directory STRUCTURE at `diroff`
+/// — entry count (u16 classic / u64 BigTIFF), the entries array (with the `m = off+size` overflow /
+/// tif_size bounds guards), and the next-IFD offset. Returns `(dircount, nextdiroff, entries)` where
+/// each entry is `(tag, type, count, offset)`; `None` on any guard failure (C returns 0). Byte-offset
+/// reads (P1) — no pointer casts; overflow guards preserved verbatim (P2). The directory-structure
+/// integer-overflow / OOB CVE surface.
+/// `(dircount, nextdiroff, entries)` where each entry is `(tag, type, count, offset)`.
+pub type FetchResult = Option<(u16, u64, Vec<(u16, u16, u64, u64)>)>;
+
+pub fn fetch_directory(swab: bool, bigtiff: bool, file: &[u8], diroff: u64) -> FetchResult {
+    let tif_size: i64 = file.len() as i64;
+    if diroff > i64::MAX as u64 {
+        return None;
+    }
+    let mut off: i64 = diroff as i64;
+
+    let dircount16: u16;
+    let dirsize: i64;
+    if !bigtiff {
+        let m = off.wrapping_add(2);
+        if m < off || m < 2 || m > tif_size {
+            return None;
+        }
+        let mut dc = u16::from_ne_bytes([file[off as usize], file[off as usize + 1]]);
+        off += 2;
+        if swab {
+            dc = dc.swap_bytes();
+        }
+        if dc > 4096 {
+            return None;
+        }
+        dircount16 = dc;
+        dirsize = 12;
+    } else {
+        let m = off.wrapping_add(8);
+        if m < off || m < 8 || m > tif_size {
+            return None;
+        }
+        let mut dc = u64::from_ne_bytes(file[off as usize..off as usize + 8].try_into().unwrap());
+        off += 8;
+        if swab {
+            dc = dc.swap_bytes();
+        }
+        if dc > 4096 {
+            return None;
+        }
+        dircount16 = dc as u16;
+        dirsize = 20;
+    }
+    if dircount16 == 0 {
+        return None;
+    }
+    // before "allocating" (we read into a Vec), reject if the entries can't fit the file
+    if (dircount16 as u64) * (dirsize as u64) > file.len() as u64 {
+        return None;
+    }
+    let entries_bytes = dircount16 as i64 * dirsize;
+    let m = off.wrapping_add(entries_bytes);
+    if m < off || m < entries_bytes || m > tif_size {
+        return None;
+    }
+    let entries_start = off as usize;
+    off += entries_bytes;
+
+    // next-IFD offset (0 if it doesn't fit — matches the C's non-fatal branch)
+    let mut nextdiroff: u64 = 0;
+    if !bigtiff {
+        let m = off.wrapping_add(4);
+        if !(m < off || m < 4 || m > tif_size) {
+            let mut nd =
+                u32::from_ne_bytes(file[off as usize..off as usize + 4].try_into().unwrap());
+            if swab {
+                nd = nd.swap_bytes();
+            }
+            nextdiroff = nd as u64;
+        }
+    } else {
+        let m = off.wrapping_add(8);
+        if !(m < off || m < 8 || m > tif_size) {
+            let mut nd =
+                u64::from_ne_bytes(file[off as usize..off as usize + 8].try_into().unwrap());
+            if swab {
+                nd = nd.swap_bytes();
+            }
+            nextdiroff = nd;
+        }
+    }
+
+    // unpack each raw 12/20-byte entry (tag/type/count swab; offset left raw — the entry readers
+    // swab it later)
+    let mut entries = Vec::with_capacity(dircount16 as usize);
+    let mut ma = entries_start;
+    for _ in 0..dircount16 {
+        let mut tag = u16::from_ne_bytes([file[ma], file[ma + 1]]);
+        if swab {
+            tag = tag.swap_bytes();
+        }
+        ma += 2;
+        let mut ty = u16::from_ne_bytes([file[ma], file[ma + 1]]);
+        if swab {
+            ty = ty.swap_bytes();
+        }
+        ma += 2;
+        let (count, offset);
+        if !bigtiff {
+            let mut c = u32::from_ne_bytes(file[ma..ma + 4].try_into().unwrap());
+            if swab {
+                c = c.swap_bytes();
+            }
+            ma += 4;
+            count = c as u64;
+            // tdir_offset: toff_long8 = 0, low 4 bytes = the raw offset u32 (NOT swabbed here)
+            let o = u32::from_ne_bytes(file[ma..ma + 4].try_into().unwrap());
+            ma += 4;
+            offset = o as u64;
+        } else {
+            let mut c = u64::from_ne_bytes(file[ma..ma + 8].try_into().unwrap());
+            if swab {
+                c = c.swap_bytes();
+            }
+            ma += 8;
+            count = c;
+            // TIFFReadUInt64 (host order, NOT swabbed here)
+            let o = u64::from_ne_bytes(file[ma..ma + 8].try_into().unwrap());
+            ma += 8;
+            offset = o;
+        }
+        entries.push((tag, ty, count, offset));
+    }
+    Some((dircount16, nextdiroff, entries))
+}
+
+fn format_fetch(res: FetchResult) -> String {
+    let mut out = String::new();
+    match res {
+        Some((dircount, nextdiroff, entries)) => {
+            use std::fmt::Write as _;
+            writeln!(out, "D {} {}", dircount, nextdiroff).unwrap();
+            for (tag, ty, count, offset) in entries {
+                writeln!(out, "e {} {} {} {}", tag, ty, count, offset).unwrap();
+            }
+        }
+        None => out.push_str("D 0 0\n"),
+    }
+    out.push_str(".\n");
+    out
+}
+
+/// Op-script line matching `cref/_driver_dir2.c`'s `sscanf(line, "F %llu %u %n", ...)`:
+/// `F <diroff> <flags> <filehex>` → the parsed directory. For certification.
+pub fn run_line_fetch(line: &str) -> String {
+    let line = match line.find('\0') {
+        Some(p) => &line[..p],
+        None => line,
+    };
+    let b = line.as_bytes();
+    if b.first() != Some(&b'F') {
+        return String::new();
+    }
+    let mut pos = 1;
+    let diroff = match scan_uint(b, &mut pos) {
+        Some(v) => v,
+        None => return String::new(),
+    };
+    let flags = match scan_uint(b, &mut pos) {
+        Some(v) => v as u32,
+        None => return String::new(),
+    };
+    while pos < b.len() && b[pos].is_ascii_whitespace() {
+        pos += 1;
+    }
+    let file: Vec<u8> = b[pos..]
+        .chunks(2)
+        .map_while(|c| {
+            if c.len() == 2 {
+                Some(((c[0] as char).to_digit(16)? * 16 + (c[1] as char).to_digit(16)?) as u8)
+            } else {
+                None
+            }
+        })
+        .collect();
+    format_fetch(fetch_directory(
+        flags & 1 != 0,
+        flags & 2 != 0,
+        &file,
+        diroff,
+    ))
+}
+
+/// Structured fuzz entry matching `cref/_fuzzlib_driver_dir2.c`:
+/// `[0..8]`=diroff(u64 native) `[8]`=flags(bit0 SWAB, bit1 BIGTIFF) `[9..]`=file. `< 9` bytes → empty.
+pub fn run_bytes_fetch(data: &[u8]) -> String {
+    if data.len() < 9 {
+        return String::new();
+    }
+    let diroff = u64::from_ne_bytes(data[0..8].try_into().unwrap());
+    let flags = data[8];
+    format_fetch(fetch_directory(
+        flags & 1 != 0,
+        flags & 2 != 0,
+        &data[9..],
+        diroff,
+    ))
+}
