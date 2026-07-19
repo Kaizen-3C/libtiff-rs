@@ -73,12 +73,23 @@ fn main() {
         .expect("run cref/assemble_dir4.py (fuzzlib variant)");
     assert!(status_dir4.success(), "assemble_dir4.py (fuzzlib) failed");
 
+    // Strip/tile geometry-count fuzzlib (Slice 5): reuse assemble_dir5.py with the fuzzlib driver.
+    let status_dir5 = Command::new("python3")
+        .arg(cref.join("assemble_dir5.py"))
+        .env("TIFF_SRC", &tiff_src)
+        .env("OUT", &out_dir)
+        .env("DRIVER", "_fuzzlib_driver_dir5.c")
+        .status()
+        .expect("run cref/assemble_dir5.py (fuzzlib variant)");
+    assert!(status_dir5.success(), "assemble_dir5.py (fuzzlib) failed");
+
     for f in [
         "_prelude.c", "_fuzzlib_driver.c", "assemble_fuzzlib.py",
         "_prelude_dir.c", "_fuzzlib_driver_dir.c", "assemble_fuzzlib_dir.py",
         "_prelude_dir2.c", "_fuzzlib_driver_dir2.c", "assemble_dir2.py",
         "_prelude_dir3.c", "_fuzzlib_driver_dir3.c", "assemble_dir3.py",
         "_prelude_dir4.c", "_fuzzlib_driver_dir4.c", "assemble_dir4.py",
+        "_prelude_dir5.c", "_fuzzlib_driver_dir5.c", "assemble_dir5.py",
     ] {
         println!("cargo:rerun-if-changed={}", cref.join(f).display());
     }
@@ -120,4 +131,11 @@ fn main() {
         .flag("-g")
         .flag("-O1")
         .compile("tiff_fuzzlib_dir4");
+    cc::Build::new()
+        .compiler("clang")
+        .file(Path::new(&out_dir).join("legacy_fuzzlib_dir5.c"))
+        .flag("-fsanitize=address,fuzzer-no-link")
+        .flag("-g")
+        .flag("-O1")
+        .compile("tiff_fuzzlib_dir5");
 }

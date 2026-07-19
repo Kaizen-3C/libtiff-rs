@@ -19,6 +19,7 @@
 
 pub mod dirread;
 pub mod driver_core;
+pub mod geometry;
 pub mod lzw;
 pub mod rle;
 

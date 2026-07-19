@@ -284,7 +284,7 @@ pub fn run_bytes(data: &[u8]) -> String {
 /// stopping at the first non-digit; `None` if no digit. Wraps on overflow (like the C `%u`/`%llu`
 /// store). This mirrors the C fuzz driver's `sscanf`, so the differential exercises the ported
 /// TIFFReadDirEntryByte LOGIC — not an op-script-parsing mismatch between the two drivers.
-fn scan_uint(b: &[u8], pos: &mut usize) -> Option<u64> {
+pub(crate) fn scan_uint(b: &[u8], pos: &mut usize) -> Option<u64> {
     while *pos < b.len() && b[*pos].is_ascii_whitespace() {
         *pos += 1;
     }
