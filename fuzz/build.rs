@@ -33,7 +33,20 @@ fn main() {
         .expect("run cref/assemble_fuzzlib.py (needs python3 on PATH)");
     assert!(status.success(), "assemble_fuzzlib.py failed");
 
-    for f in ["_prelude.c", "_fuzzlib_driver.c", "assemble_fuzzlib.py"] {
+    // IFD entry-reader fuzzlib (Slice 1): distinct in-process symbol (run_case_c_dir) over the
+    // verbatim tif_dirread.c slice — the integer-overflow/OOB CVE surface.
+    let status_dir = Command::new("python3")
+        .arg(cref.join("assemble_fuzzlib_dir.py"))
+        .env("TIFF_SRC", &tiff_src)
+        .env("OUT", &out_dir)
+        .status()
+        .expect("run cref/assemble_fuzzlib_dir.py (needs python3 on PATH)");
+    assert!(status_dir.success(), "assemble_fuzzlib_dir.py failed");
+
+    for f in [
+        "_prelude.c", "_fuzzlib_driver.c", "assemble_fuzzlib.py",
+        "_prelude_dir.c", "_fuzzlib_driver_dir.c", "assemble_fuzzlib_dir.py",
+    ] {
         println!("cargo:rerun-if-changed={}", cref.join(f).display());
     }
 
@@ -46,4 +59,11 @@ fn main() {
         .flag("-g")
         .flag("-O1")
         .compile("tiff_fuzzlib");
+    cc::Build::new()
+        .compiler("clang")
+        .file(Path::new(&out_dir).join("legacy_fuzzlib_dir.c"))
+        .flag("-fsanitize=address,fuzzer-no-link")
+        .flag("-g")
+        .flag("-O1")
+        .compile("tiff_fuzzlib_dir");
 }

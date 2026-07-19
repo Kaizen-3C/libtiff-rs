@@ -253,41 +253,116 @@ pub fn read_dir_entry_byte(ctx: &Ctx, e: &DirEntry) -> (DirEntryErr, u8) {
     }
 }
 
-/// Op-script line matching `cref/_driver_dir.c`: `E <type> <count> <offset_u64> <flags> <filehex>`
-/// → `R <errcode> <value>\n.\n`. `flags` bit0=SWAB, bit1=BIGTIFF.
+/// Structured fuzz entry — matches `cref/_fuzzlib_driver_dir.c` byte-for-byte so the differential
+/// exercises only the `TIFFReadDirEntryByte` LOGIC (no text-parsing mismatch). Layout:
+/// `[0..2]`=type(u16 LE) `[2..10]`=count(u64 native) `[10..18]`=tdir_offset(raw 8) `[18]`=flags
+/// (bit0 SWAB, bit1 BIGTIFF) `[19..]`=file. `< 19` bytes → empty.
+pub fn run_bytes(data: &[u8]) -> String {
+    if data.len() < 19 {
+        return String::new();
+    }
+    let ty = u16::from_le_bytes([data[0], data[1]]); // C: in[0] | (in[1] << 8)
+    let count = u64::from_ne_bytes(data[2..10].try_into().unwrap()); // C: memcpy (host order)
+    let mut off = [0u8; 8];
+    off.copy_from_slice(&data[10..18]); // raw offset/value union bytes
+    let flags = data[18];
+    let e = DirEntry {
+        tdir_type: ty,
+        tdir_count: count,
+        tdir_offset: off,
+    };
+    let ctx = Ctx {
+        swab: flags & 1 != 0,
+        bigtiff: flags & 2 != 0,
+        file: &data[19..],
+    };
+    let (err, value) = read_dir_entry_byte(&ctx, &e);
+    format!("R {} {}\n.\n", err as i32, value)
+}
+
+/// A `sscanf`-compatible unsigned scan: skip leading whitespace, then a run of decimal digits,
+/// stopping at the first non-digit; `None` if no digit. Wraps on overflow (like the C `%u`/`%llu`
+/// store). This mirrors the C fuzz driver's `sscanf`, so the differential exercises the ported
+/// TIFFReadDirEntryByte LOGIC — not an op-script-parsing mismatch between the two drivers.
+fn scan_uint(b: &[u8], pos: &mut usize) -> Option<u64> {
+    while *pos < b.len() && b[*pos].is_ascii_whitespace() {
+        *pos += 1;
+    }
+    // sscanf `%u`/`%llu` accept an optional sign (via strtoul); a `-` value wraps into the unsigned.
+    let neg = if *pos < b.len() && (b[*pos] == b'+' || b[*pos] == b'-') {
+        let n = b[*pos] == b'-';
+        *pos += 1;
+        n
+    } else {
+        false
+    };
+    let mut val: u64 = 0;
+    let mut any = false;
+    while *pos < b.len() && b[*pos].is_ascii_digit() {
+        any = true;
+        val = val.wrapping_mul(10).wrapping_add((b[*pos] - b'0') as u64);
+        *pos += 1;
+    }
+    if any {
+        Some(if neg { val.wrapping_neg() } else { val })
+    } else {
+        None
+    }
+}
+
+/// Op-script line matching `cref/_driver_dir.c` / `_fuzzlib_driver_dir.c`'s
+/// `sscanf(line, "E %u %llu %llu %u %n", ...)` >= 4 gate:
+/// `E <type> <count> <offset_u64> <flags> <filehex>` → `R <errcode> <value>\n.\n`, else empty.
+/// `flags` bit0=SWAB, bit1=BIGTIFF. `%u` stores into `unsigned` (32-bit) for type/flags.
 pub fn run_line(line: &str) -> String {
-    let rest = match line.strip_prefix('E') {
-        Some(r) => r.trim_start(),
+    // C's `sscanf` runs over a NUL-terminated copy: an embedded 0x00 ends the string there. Truncate
+    // up front so both drivers parse identical content.
+    let line = match line.find('\0') {
+        Some(p) => &line[..p],
+        None => line,
+    };
+    let b = line.as_bytes();
+    // the format's literal `E` must match the first input byte exactly (sscanf doesn't skip ws before
+    // a literal); a missing field means < 4 conversions -> the C driver emits nothing.
+    if b.first() != Some(&b'E') {
+        return String::new();
+    }
+    let mut pos = 1;
+    let ty32 = match scan_uint(b, &mut pos) {
+        Some(v) => v as u32,
         None => return String::new(),
     };
-    let mut it = rest.split_whitespace();
-    let ty: u16 = match it.next().and_then(|s| s.parse().ok()) {
+    let count = match scan_uint(b, &mut pos) {
         Some(v) => v,
         None => return String::new(),
     };
-    let count: u64 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let offset: u64 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let flags: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let file: Vec<u8> = it
-        .next()
-        .map(|h| {
-            h.as_bytes()
-                .chunks(2)
-                .filter_map(|c| {
-                    if c.len() == 2 {
-                        let hi = (c[0] as char).to_digit(16)?;
-                        let lo = (c[1] as char).to_digit(16)?;
-                        Some((hi * 16 + lo) as u8)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+    let offset = match scan_uint(b, &mut pos) {
+        Some(v) => v,
+        None => return String::new(),
+    };
+    let flags = match scan_uint(b, &mut pos) {
+        Some(v) => v as u32,
+        None => return String::new(),
+    };
+    // filehex starts after the whitespace following `flags` (the format's `%u %n`)
+    while pos < b.len() && b[pos].is_ascii_whitespace() {
+        pos += 1;
+    }
+    let file: Vec<u8> = b[pos..]
+        .chunks(2)
+        .map_while(|c| {
+            if c.len() == 2 {
+                let hi = (c[0] as char).to_digit(16)?;
+                let lo = (c[1] as char).to_digit(16)?;
+                Some((hi * 16 + lo) as u8)
+            } else {
+                None
+            }
         })
-        .unwrap_or_default();
+        .collect();
 
     let e = DirEntry {
-        tdir_type: ty,
+        tdir_type: ty32 as u16,
         tdir_count: count,
         tdir_offset: offset.to_ne_bytes(),
     };

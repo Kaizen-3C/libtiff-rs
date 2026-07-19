@@ -22,3 +22,7 @@ path = "fuzz_targets/differential.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "differential_dir"
+path = "fuzz_targets/differential_dir.rs"
