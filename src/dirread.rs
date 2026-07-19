@@ -581,3 +581,317 @@ pub fn run_bytes_fetch(data: &[u8]) -> String {
         diroff,
     ))
 }
+
+// ============================================================================
+// Slice 3 — value-array fetch (the core of TIFFFetchNormalTag's field read):
+// TIFFReadDirEntryByteArray -> TIFFReadDirEntryArray -> TIFFReadDirEntryArrayWithLimit.
+// The count x typesize MULTIPLY-OVERFLOW / MAX_SIZE_TAG_DATA (2GB) size-sanity /
+// allocation-bounds / classic-vs-BigTIFF inline-or-offset read / per-element range-checked
+// type-conversion. libtiff's tag-array integer-overflow -> under-allocation -> OOB CVE surface.
+// Byte-offset reads (P1); overflow/size guards preserved verbatim (P2/P5). #![forbid(unsafe_code)].
+// ============================================================================
+
+const TIFF_ASCII: u16 = 2;
+const TIFF_RATIONAL: u16 = 5;
+const TIFF_SRATIONAL: u16 = 10;
+const TIFF_FLOAT: u16 = 11;
+const TIFF_DOUBLE: u16 = 12;
+const TIFF_IFD: u16 = 13;
+const TIFF_IFD8: u16 = 18;
+const MAX_SIZE_TAG_DATA: u32 = 2147483647; // 2GB-1 — the tag-array size sanity ceiling
+
+/// `TIFFDataWidth`: byte width per field type; 0 for unknown (verbatim table).
+fn data_width(t: u16) -> i32 {
+    match t {
+        0 | TIFF_BYTE | TIFF_ASCII | TIFF_SBYTE | TIFF_UNDEFINED => 1,
+        TIFF_SHORT | TIFF_SSHORT => 2,
+        TIFF_LONG | TIFF_SLONG | TIFF_FLOAT | TIFF_IFD => 4,
+        TIFF_RATIONAL | TIFF_SRATIONAL | TIFF_DOUBLE | TIFF_LONG8 | TIFF_SLONG8 | TIFF_IFD8 => 8,
+        _ => 0,
+    }
+}
+
+/// `TIFFReadDirEntryArrayWithLimit`: fetch the raw value array. Returns `(err, count, Some(bytes))`
+/// where `bytes.len() == count * typesize`, or `(Ok, 0, None)` when the tag holds no data
+/// (`*value = 0` in C). `toffset` = the entry's raw 8-byte offset/value field (host order).
+fn read_dir_entry_array_with_limit(
+    ctx: &Ctx,
+    ttype: u16,
+    tcount: u64,
+    toffset: &[u8; 8],
+    desttypesize: u32,
+    maxcount: u64,
+) -> (DirEntryErr, u32, Option<Vec<u8>>) {
+    let typesize = data_width(ttype);
+    let target_count64 = if tcount > maxcount { maxcount } else { tcount };
+    if target_count64 == 0 || typesize == 0 {
+        return (DirEntryErr::Ok, 0, None); // *value = 0
+    }
+    // Only whether the original tag size exceeds 4 (classic) / 8 (BigTIFF) bytes matters here.
+    let original_datasize_clamped = (if tcount > 10 { 10 } else { tcount as i32 }) * typesize;
+
+    // 2GB size sanity in BOTH the source and dest data type — this is the multiply-overflow guard.
+    if (MAX_SIZE_TAG_DATA as u64 / typesize as u64) < target_count64 {
+        return (DirEntryErr::Sizesan, 0, None);
+    }
+    if (MAX_SIZE_TAG_DATA as u64 / desttypesize as u64) < target_count64 {
+        return (DirEntryErr::Sizesan, 0, None);
+    }
+
+    let count = target_count64 as u32;
+    let datasize = count * (typesize as u32); // <= MAX_SIZE_TAG_DATA by the sanity checks; no overflow
+    debug_assert!(datasize > 0);
+
+    if datasize > 100 * 1024 * 1024 {
+        // Before allocating a huge buffer for a corrupt file, require it to fit within the file.
+        let filesize = ctx.file.len() as u64;
+        if datasize as u64 > filesize {
+            return (DirEntryErr::Alloc, 0, None);
+        }
+    }
+
+    // isMapped(tif) is always true (memory buffer): the value bytes must lie within the file.
+    if datasize as u64 > ctx.file.len() as u64 {
+        return (DirEntryErr::Io, 0, None);
+    }
+
+    let mut data = vec![0u8; datasize as usize]; // isMapped -> always allocate
+    if !ctx.bigtiff {
+        if original_datasize_clamped <= 4 && datasize <= 4 {
+            data.copy_from_slice(&toffset[..datasize as usize]);
+        } else {
+            let mut offset = u32::from_ne_bytes(toffset[0..4].try_into().unwrap());
+            if ctx.swab {
+                offset = offset.swap_bytes();
+            }
+            let err = read_dir_entry_data(ctx, offset as u64, datasize as usize, &mut data);
+            if err != DirEntryErr::Ok {
+                return (err, 0, None);
+            }
+        }
+    } else if original_datasize_clamped <= 8 && datasize <= 8 {
+        data.copy_from_slice(&toffset[..datasize as usize]);
+    } else {
+        let mut offset = u64::from_ne_bytes(*toffset);
+        if ctx.swab {
+            offset = offset.swap_bytes();
+        }
+        let err = read_dir_entry_data(ctx, offset, datasize as usize, &mut data);
+        if err != DirEntryErr::Ok {
+            return (err, 0, None);
+        }
+    }
+    (DirEntryErr::Ok, count, Some(data))
+}
+
+fn read_dir_entry_array(
+    ctx: &Ctx,
+    ttype: u16,
+    tcount: u64,
+    toffset: &[u8; 8],
+    desttypesize: u32,
+) -> (DirEntryErr, u32, Option<Vec<u8>>) {
+    read_dir_entry_array_with_limit(ctx, ttype, tcount, toffset, desttypesize, u64::MAX)
+}
+
+/// One source element (`chunk`, `typesize` bytes, host order) -> validated low byte, mirroring the
+/// swab-then-range-check-then-truncate order of `TIFFReadDirEntryByteArray`'s conversion loops.
+fn convert_byte_elem(swab: bool, ttype: u16, chunk: &[u8]) -> (DirEntryErr, u8) {
+    match ttype {
+        TIFF_SHORT => {
+            let mut v = u16::from_ne_bytes([chunk[0], chunk[1]]);
+            if swab {
+                v = v.swap_bytes();
+            }
+            (range_byte_short(v), v as u8)
+        }
+        TIFF_SSHORT => {
+            let mut r = u16::from_ne_bytes([chunk[0], chunk[1]]);
+            if swab {
+                r = r.swap_bytes();
+            }
+            let v = r as i16;
+            (range_byte_sshort(v), v as u8)
+        }
+        TIFF_LONG => {
+            let mut v = u32::from_ne_bytes(chunk[0..4].try_into().unwrap());
+            if swab {
+                v = v.swap_bytes();
+            }
+            (range_byte_long(v), v as u8)
+        }
+        TIFF_SLONG => {
+            let mut r = u32::from_ne_bytes(chunk[0..4].try_into().unwrap());
+            if swab {
+                r = r.swap_bytes();
+            }
+            let v = r as i32;
+            (range_byte_slong(v), v as u8)
+        }
+        TIFF_LONG8 => {
+            let mut v = u64::from_ne_bytes(chunk[0..8].try_into().unwrap());
+            if swab {
+                v = v.swap_bytes();
+            }
+            (range_byte_long8(v), v as u8)
+        }
+        TIFF_SLONG8 => {
+            let mut r = u64::from_ne_bytes(chunk[0..8].try_into().unwrap());
+            if swab {
+                r = r.swap_bytes();
+            }
+            let v = r as i64;
+            (range_byte_slong8(v), v as u8)
+        }
+        _ => (DirEntryErr::Type, 0), // unreachable given the caller's type gate
+    }
+}
+
+/// `TIFFReadDirEntryByteArray`: fetch the value array and coerce every element to a byte, with the
+/// per-type range validation. Returns `(err, Some(bytes))` on success (`bytes.len() == count`), or
+/// `(err, None)` on failure / no data (`*value = 0`).
+pub fn read_dir_entry_byte_array(
+    ctx: &Ctx,
+    ttype: u16,
+    tcount: u64,
+    toffset: &[u8; 8],
+) -> (DirEntryErr, Option<Vec<u8>>) {
+    match ttype {
+        TIFF_ASCII | TIFF_UNDEFINED | TIFF_BYTE | TIFF_SBYTE | TIFF_SHORT | TIFF_SSHORT
+        | TIFF_LONG | TIFF_SLONG | TIFF_LONG8 | TIFF_SLONG8 => {}
+        _ => return (DirEntryErr::Type, None),
+    }
+    let (err, count, origdata) = read_dir_entry_array(ctx, ttype, tcount, toffset, 1);
+    let origdata = match origdata {
+        Some(d) if err == DirEntryErr::Ok => d,
+        _ => return (err, None), // (err != Ok) || origdata == 0  ->  *value = 0
+    };
+    match ttype {
+        TIFF_ASCII | TIFF_UNDEFINED | TIFF_BYTE => (DirEntryErr::Ok, Some(origdata)),
+        TIFF_SBYTE => {
+            // Validate each byte as int8; the bytes are returned unchanged.
+            for &b in origdata.iter().take(count as usize) {
+                let e = range_byte_sbyte(b as i8);
+                if e != DirEntryErr::Ok {
+                    return (e, None);
+                }
+            }
+            (DirEntryErr::Ok, Some(origdata))
+        }
+        _ => {
+            let typesize = data_width(ttype) as usize;
+            let mut data = vec![0u8; count as usize];
+            for n in 0..count as usize {
+                let base = n * typesize;
+                let (e, byte) =
+                    convert_byte_elem(ctx.swab, ttype, &origdata[base..base + typesize]);
+                if e != DirEntryErr::Ok {
+                    return (e, None); // C breaks the loop, frees both buffers, returns err
+                }
+                data[n] = byte;
+            }
+            (DirEntryErr::Ok, Some(data))
+        }
+    }
+}
+
+fn format_arr(res: (DirEntryErr, Option<Vec<u8>>)) -> String {
+    use std::fmt::Write as _;
+    let (err, val) = res;
+    let mut out = String::new();
+    match val {
+        Some(v) if err == DirEntryErr::Ok => {
+            write!(out, "A 0 {} ", v.len()).unwrap();
+            for b in &v {
+                write!(out, "{:02x}", b).unwrap();
+            }
+            out.push('\n');
+        }
+        _ => {
+            writeln!(out, "A {} 0 ", err as i32).unwrap();
+        }
+    }
+    out.push_str(".\n");
+    out
+}
+
+/// Op-script line matching `cref/_driver_dir3.c`:
+/// `A <flags> <type> <count> <offsethex16> <filehex>` → the fetched byte array. For certification.
+pub fn run_line_arr(line: &str) -> String {
+    let line = match line.find('\0') {
+        Some(p) => &line[..p],
+        None => line,
+    };
+    let b = line.as_bytes();
+    if b.first() != Some(&b'A') {
+        return String::new();
+    }
+    let mut pos = 1;
+    let flags = match scan_uint(b, &mut pos) {
+        Some(v) => v as u32,
+        None => return String::new(),
+    };
+    let ttype = match scan_uint(b, &mut pos) {
+        Some(v) => v as u16,
+        None => return String::new(),
+    };
+    let tcount = match scan_uint(b, &mut pos) {
+        Some(v) => v,
+        None => return String::new(),
+    };
+    while pos < b.len() && b[pos].is_ascii_whitespace() {
+        pos += 1;
+    }
+    // exactly 16 hex chars = 8 raw offset bytes (as the union holds them)
+    if pos + 16 > b.len() {
+        return String::new();
+    }
+    let mut toffset = [0u8; 8];
+    for (i, slot) in toffset.iter_mut().enumerate() {
+        let hi = (b[pos + i * 2] as char).to_digit(16);
+        let lo = (b[pos + i * 2 + 1] as char).to_digit(16);
+        match (hi, lo) {
+            (Some(h), Some(l)) => *slot = (h * 16 + l) as u8,
+            _ => return String::new(),
+        }
+    }
+    pos += 16;
+    while pos < b.len() && b[pos].is_ascii_whitespace() {
+        pos += 1;
+    }
+    let file: Vec<u8> = b[pos..]
+        .chunks(2)
+        .map_while(|c| {
+            if c.len() == 2 {
+                Some(((c[0] as char).to_digit(16)? * 16 + (c[1] as char).to_digit(16)?) as u8)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let ctx = Ctx {
+        swab: flags & 1 != 0,
+        bigtiff: flags & 2 != 0,
+        file: &file,
+    };
+    format_arr(read_dir_entry_byte_array(&ctx, ttype, tcount, &toffset))
+}
+
+/// Structured fuzz entry matching `cref/_fuzzlib_driver_dir3.c`:
+/// `[0]`=flags(bit0 SWAB, bit1 BIGTIFF) `[1..3]`=type(u16 native) `[3..11]`=count(u64 native)
+/// `[11..19]`=offset(8 raw bytes) `[19..]`=file. `< 19` bytes → empty.
+pub fn run_bytes_arr(data: &[u8]) -> String {
+    if data.len() < 19 {
+        return String::new();
+    }
+    let flags = data[0];
+    let ttype = u16::from_ne_bytes([data[1], data[2]]);
+    let tcount = u64::from_ne_bytes(data[3..11].try_into().unwrap());
+    let toffset: [u8; 8] = data[11..19].try_into().unwrap();
+    let ctx = Ctx {
+        swab: flags & 1 != 0,
+        bigtiff: flags & 2 != 0,
+        file: &data[19..],
+    };
+    format_arr(read_dir_entry_byte_array(&ctx, ttype, tcount, &toffset))
+}
