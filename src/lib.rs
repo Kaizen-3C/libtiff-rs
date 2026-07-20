@@ -17,6 +17,7 @@
 #![allow(clippy::ptr_arg)]
 #![allow(clippy::manual_memcpy)]
 
+pub mod decode;
 pub mod dirread;
 pub mod driver_core;
 pub mod geometry;
