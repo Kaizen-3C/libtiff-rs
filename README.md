@@ -1,17 +1,64 @@
 # libtiff-rs
 
-Memory-safe Rust ports of libtiff 4.7.0's **codec-core decoders** — the separable, pure-C,
-untrusted-input decompressors, each differentially certified byte-identical to the upstream C
-build:
+A memory-safe Rust reimplementation of libtiff 4.7.0's **TIFF decode path**, built bottom-up and
+**differentially certified byte-identical to the upstream C** — not a clean-room rewrite, a proven
+drop-in. The entire crate is **`#![forbid(unsafe_code)]`**.
 
-- **`lzw`** — the LZW decoder (`LZWSetupDecode` + `LZWPreDecode` + `LZWDecode` from `tif_lzw.c`):
-  a 9–12-bit code-table decoder, libtiff's richest untrusted-input surface (code-table index
-  limits, CLEAR/EOI, the "bogus input" table-zeroing — classic LZW-overflow CVE territory).
-- **`rle`** — `PackBitsDecode` (`tif_packbits.c`), `ThunderDecode` (`tif_thunder.c`), and
-  `NeXTDecode` (`tif_next.c`): the RLE-family codecs, whose overrun-avoidance and scanline/
-  pixel-count bounds checks are the codec-overflow surface for TIFF RLE data.
+A real TIFF file decodes to pixels in safe Rust, byte-for-byte identical to what `libtiff` itself
+produces (see **End-to-end decode** below). The pieces underneath — the codec decoders, the
+directory/IFD parser, and the strip geometry — are each certified against the verbatim upstream C
+over an adversarial test envelope, re-provable from the sha256-pinned release.
 
-The entire crate is **`#![forbid(unsafe_code)]`** and has **zero dependencies**.
+## What's implemented and certified
+
+| Layer | Module | Certification (vs verbatim libtiff 4.7.0 C) |
+|---|---|---|
+| **Codec decoders** — LZW (`tif_lzw.c`), PackBits/Thunder/NeXT (`tif_packbits`/`_thunder`/`_next.c`) | `lzw`, `rle` | **538/538** cases byte-identical; re-proven **in CI every commit** (`regen_goldens.sh`) |
+| **IFD entry readers** — typed value promotion + the offset/size-overflow & `tif_size` bounds core | `dirread` | **1692** cases byte-identical |
+| **Directory scan** — `TIFFFetchDirectory` (entry-count/offset overflow guards, BigTIFF) | `dirread` | **25**-case adversarial envelope |
+| **Tag value arrays** — `TIFFReadDirEntryByteArray`/`…Array` (2 GB size-sanity, multiply-overflow) | `dirread` | **26**-case |
+| **Strip offset/bytecount arrays** — `TIFFReadDirEntryLong8Array` | `dirread` | **28**-case |
+| **Strip/tile geometry** — `TIFFNumberOfStrips`/`…Tiles` (count multiply-overflow) | `geometry` | **20,743**-case near-exhaustive boundary sweep |
+| **End-to-end decode** — header → directory → tags → strip read → codec → pixels | `decode` | **12/12** byte-identical **vs the real `libtiff`** |
+
+Every layer's differential is re-provable from the upstream tarball. The IFD and geometry surfaces
+are also hardened with coverage-guided **differential fuzzing** (safe Rust vs. verbatim C under
+AddressSanitizer); billion-execution soaks have run clean.
+
+## End-to-end decode
+
+`decode::decode_tiff(&file_bytes)` parses a TIFF header, reads its directory, extracts the geometry
+and codec tags, reads each strip, and dispatches to the certified codec — producing the same pixel
+bytes `TIFFReadEncodedStrip` produces. `scripts/e2e_certify.sh` proves this from first principles: it
+builds a minimal static `libtiff` from the pinned 4.7.0 source, decodes a matrix of generated TIFFs
+(little- and big-endian × uncompressed / PackBits / LZW × single-, multi-, and partial-strip
+layouts) with **both** the real library and this crate, and byte-compares. Current result: **12/12
+identical**.
+
+**Scope of the current decode path** (deliberately minimal, proven end-to-end): classic TIFF, 8-bit
+contiguous samples, single-plane, Compression NONE / PackBits / LZW. Not yet covered: tiles, BigTIFF
+end-to-end, the predictors (`tif_predict.c`), sub-8-bit / >8-bit samples, planar-separate, and the
+remaining codecs (e.g. CCITT fax) — the breadth that turns this from a proven core into a full
+production decoder.
+
+## Certification methodology
+
+The crate was not reviewed into correctness — it was **measured** into it. For each layer, the
+verbatim upstream C (re-sliced from the sha256-pinned `tiff-4.7.0.tar.gz`) and the Rust port are
+driven by an identical op-script / structured-input harness over a declared envelope, and their
+complete observable output is byte-compared. Valid inputs are generated so the corpus is genuinely
+well-formed where it claims to be and genuinely hostile (truncation, corruption, overflow triggers,
+pure-garbage fuzz) where it claims to be. `cargo test` replays the checked-in goldens; the `scripts/`
+harnesses rebuild the C reference from upstream and re-prove the differential (`regen_goldens.sh` for
+the codecs, in CI; `e2e_certify.sh` for the end-to-end decode).
+
+## How the port handles the C structure
+
+libtiff's C is raw-pointer-heavy — `goto` state machines, a `code_t` linked-list code table walked by
+pointer (with a one-before-the-array sentinel), a `tdir_offset` union read through pointer casts, and
+`size_t`/`uint32` overflow-guarded arithmetic throughout. The safe-Rust ports reindex pointer chains
+to array indices, read the union's bytes at explicit offsets (no casts), and preserve the C's exact
+overflow guards and accept/reject/bounds behaviour on every input — with **zero `unsafe`**.
 
 ## Provenance
 
@@ -20,63 +67,14 @@ The entire crate is **`#![forbid(unsafe_code)]`** and has **zero dependencies**.
 - Licensed under the libtiff license, identical to upstream; see `LICENSE` (Sam Leffler /
   Silicon Graphics copyright retained).
 
-## Scope
-
-This crate is the **codec *decoders*** — the compression layer that runs on untrusted TIFF
-pixel data. Out of scope (and not in this crate): the TIFF directory/IFD parser, strip/tile
-plumbing, the predictor, the codec *encoders*, and the backwards-compatible old-style LZW path
-(`LZWDecodeCompat`, left undefined so old-style streams take the upstream reject branch).
-
-## Certification methodology
-
-This crate was not reviewed into correctness — it was **measured** into it. The upstream C
-decoders and the Rust ports are both driven by an identical op-script harness (one codec-tagged
-op per stdin line) over a declared envelope, and their complete observable stdout — decoder
-return code, decoded-byte hash, and input-consumed count — is byte-compared against the upstream
-C build:
-
-| Envelope | Cases | What it exercises | Result |
-|---|---|---|---|
-| `tests/vectors/tiff_*` | 538 | **LZW**: table-saturation/CLEAR, every 9→12-bit width boundary, old-style rejection, truncation, bit-flips into undefined codes, fuzz. **PackBits**: literal/replicate runs, the overrun-avoidance and not-enough-data paths. **Thunder**: RAW/RUN/2-bit/3-bit deltas, odd-pixel edges, `npixels>maxpixels`. **NeXT**: LITERALROW/LITERALSPAN/run-mode, fractional-scanline and span-bounds rejection. Across all four codecs, a large adversarial half (truncation, corruption, pure-garbage fuzz) driving the error/bounds paths. | **538/538 byte-identical** |
-
-Valid streams are generated by encoders (LZW, PackBits) verified to round-trip through the C
-decoders, so the corpus is genuinely well-formed where it claims to be and genuinely hostile
-where it claims to be. Run it yourself: `cargo test` replays the envelope through the crate's
-`differential_driver` and compares against the checked-in golden; `scripts/regen_goldens.sh`
-rebuilds the C reference from upstream (slicing all four verbatim decoders from the tarball) and
-re-proves it (CI runs it every commit).
-
-## How the port handles the C decoders' structure
-
-`LZWDecode` in C is a `goto`-based state machine that walks a `code_t` linked-list code table
-via raw pointers (including a one-before-the-array sentinel); the RLE codecs use signed-byte run
-arithmetic and 2-/4-bit pixel packing. The safe-Rust ports reindex the pointer chains to array
-indices, restructure the `goto` machine into ordinary control flow, and reproduce the C's exact
-accept/reject/bounds behavior on every input — with **zero `unsafe`**.
-
-## Per-codec certification
-
-Each decoder was ported and certified **independently** at a size the porting pipeline handles
-reliably (a combined single-pass port of all four exceeded that limit; see the campaign notes),
-then composed into this crate. The 538-case differential above certifies the *composition*
-against a single upstream C reference that dispatches all four decoders, so the assembly is
-proven correct, not assumed.
-
-## API shape
-
-Safe-Rust functions over byte slices:
-- `lzw::lzw_decode(raw, occ) -> (ret, Vec<u8>, rawcc)`
-- `rle::packbits_decode(raw, buf) -> (ret, rawcc)`
-- `rle::thunder_decode(raw, buf, maxpixels) -> (ret, rawcc)`
-- `rle::next_decode_mem(raw, buf, occ, scanline, imagewidth) -> (ret, rawcc)`
-
-Not ABI-compatible with C callers.
-
 ## Layout
 
-- `src/lzw.rs` — the LZW decoder · `src/rle.rs` — PackBits + Thunder + NeXT
-- `src/bin/differential_driver.rs` — the certification op-script driver (mirrors `cref/_driver.c`)
-- `cref/` — the C reference harness: `_prelude.c` (minimal TIFF shim), `_driver.c` (dispatching
-  driver), `assemble.py` (slices the four verbatim decoders from an upstream libtiff checkout)
-- `tests/differential.rs` + `tests/vectors/` — full envelope replay
-- `scripts/regen_goldens.sh` — download upstream, build the C reference, re-prove the differential
+- `src/lzw.rs`, `src/rle.rs` — the codec decoders
+- `src/dirread.rs` — the IFD directory/entry parser (readers, directory scan, value + strip arrays)
+- `src/geometry.rs` — strip/tile geometry counts
+- `src/decode.rs` — the end-to-end `decode_tiff` path
+- `src/bin/*` — the certification op-script drivers (each mirrors a `cref/_driver_*.c`)
+- `cref/` — the C reference harnesses (minimal shims + `assemble*.py`, slicing the verbatim C from an
+  upstream checkout) and the end-to-end oracle/generator (`_e2e_ref.c`, `_e2e_gen.c`)
+- `tests/vectors/` — the checked-in goldens · `scripts/` — `regen_goldens.sh`, `e2e_certify.sh`
+- `fuzz/` — the coverage-guided differential fuzz targets (see `FUZZING.md`)
