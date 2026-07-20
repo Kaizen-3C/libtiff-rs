@@ -3,7 +3,7 @@
 //! range guards, and `TIFFReadDirEntryData` — the offset+size-overflow / `tif_size`-bounds core
 //! that is libtiff's classic integer-overflow → OOB CVE surface. `#![forbid(unsafe_code)]`.
 //!
-//! c2rust translation notes (distilled into ../../../C2RUST-LEARNINGS.md, for the engine):
+//! Translation notes (C idioms → safe Rust):
 //!  1. UNION-VIA-POINTER-CAST. The C reads `direntry->tdir_offset` (a union {u16,u32,u64}) with
 //!     `*(uint8_t*)&u`, `u.toff_short`, `*(int16_t*)&u`, etc. `forbid(unsafe_code)` can't cast, so
 //!     we keep the raw 8 offset-field bytes and read the low N in NATIVE order (matching the

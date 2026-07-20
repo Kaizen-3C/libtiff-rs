@@ -5,8 +5,8 @@
 //! libtiff's classic strip/tile-count integer-overflow → under-allocation → OOB CVE surface.
 //! Pure arithmetic — no file I/O. `#![forbid(unsafe_code)]`.
 //!
-//! c2rust translation notes (see ../../../C2RUST-LEARNINGS.md):
-//!  - P2d: C's guarded multiply `if (second && first > UINT32_MAX/second) return 0; return
+//! Translation notes (C idioms → safe Rust):
+//!  - Guarded multiply: C's `if (second && first > UINT32_MAX/second) return 0; return
 //!    first*second;` must keep the *division-form* guard AND use `wrapping_mul` for the product —
 //!    plain `*` panics on debug overflow even though the guard makes it unreachable, and the panic
 //!    would be a behaviour divergence (and a DoS) the C does not have.
