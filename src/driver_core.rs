@@ -20,9 +20,8 @@ fn hexval(c: u8) -> Option<u8> {
 /// target): skip leading isspace() (space/\t/\n/\v/\f/\r), optional sign, then a run of decimal
 /// digits, stopping at the first non-digit — not Rust's `str::parse`, which rejects the whole
 /// string on any trailing garbage. `cref/_driver.c` parses every numeric op-script field with
-/// real `atol()`; found by libogg-rs's differential fuzz target hitting the same class of gap
-/// (see ../../libogg-rs/FUZZING.md finding #2) — fixed here proactively rather than waiting to
-/// rediscover it. Overflow saturates to i64::MAX/MIN, matching atol's ERANGE-then-ignore
+/// real `atol()`, so the port matches that exactly to keep the two engines' tokenization in
+/// lockstep. Overflow saturates to i64::MAX/MIN, matching atol's ERANGE-then-ignore
 /// behavior; every caller here additionally clamps the result to a small sane range, so the
 /// saturation direction rarely matters in practice, but the leading-digit-then-stop parsing does.
 fn atol(s: &str) -> i64 {
@@ -99,10 +98,8 @@ pub fn run_line(line: &str) -> String {
     // _driver.c's `strtok` operates on a NUL-terminated C string: an embedded 0x00 anywhere in
     // the line silently ends it there for every downstream C string function (strtok, atol),
     // even though Rust strings can contain interior NULs freely. Truncate up front so both
-    // engines tokenize identical content — same class of gap already found and fixed in
-    // libogg-rs's driver_core.rs (see ../../libogg-rs/FUZZING.md finding #3's neighbor); fixed
-    // here proactively rather than waiting to rediscover it, except this time the fuzzer beat
-    // the fix (found within the first ~1,200 executions).
+    // engines tokenize identical content — the differential fuzzer surfaced this gap within the
+    // first ~1,200 executions.
     let line = match line.find('\0') {
         Some(pos) => &line[..pos],
         None => line,

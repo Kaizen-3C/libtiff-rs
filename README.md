@@ -1,5 +1,9 @@
 # libtiff-rs
 
+[![CI](https://github.com/Kaizen-3C/libtiff-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/Kaizen-3C/libtiff-rs/actions/workflows/ci.yml)
+[![unsafe: forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](src/lib.rs)
+[![license: libtiff](https://img.shields.io/badge/license-libtiff-blue.svg)](LICENSE)
+
 A memory-safe Rust reimplementation of libtiff 4.7.0's **TIFF decode path**, built bottom-up and
 **differentially certified byte-identical to the upstream C** — not a clean-room rewrite, a proven
 drop-in. The entire crate is **`#![forbid(unsafe_code)]`**.
@@ -23,7 +27,8 @@ over an adversarial test envelope, re-provable from the sha256-pinned release.
 
 Every layer's differential is re-provable from the upstream tarball. The IFD and geometry surfaces
 are also hardened with coverage-guided **differential fuzzing** (safe Rust vs. verbatim C under
-AddressSanitizer); billion-execution soaks have run clean.
+AddressSanitizer); a reproducible 4-hour, ~7.6-billion-execution soak across the IFD surface ran
+clean — zero crashes, zero differential mismatches, across independent runs (see `FUZZING.md`).
 
 ## End-to-end decode
 

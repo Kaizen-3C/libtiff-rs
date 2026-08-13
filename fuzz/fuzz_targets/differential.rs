@@ -31,9 +31,9 @@ fn run_case_c_safe(line: &[u8]) -> String {
 }
 
 fuzz_target!(|data: &[u8]| {
-    // Same reasoning as the libpcap-rs/libogg-rs fuzz targets: convert once, feed the SAME
-    // bytes to both sides, so an invalid-UTF-8 input can't "diverge" purely from encoding
-    // handling rather than any real behavioral difference in the ported logic.
+    // Convert once and feed the SAME bytes to both sides, so an invalid-UTF-8 input can't
+    // "diverge" purely from encoding handling rather than any real behavioral difference in
+    // the ported logic.
     let line = String::from_utf8_lossy(data).into_owned();
     let c_trace = run_case_c_safe(line.as_bytes());
     let rust_trace = libtiff_rs::driver_core::run_line(&line);

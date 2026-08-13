@@ -3,7 +3,6 @@
 Coverage-guided fuzzing that generates op-script lines and checks the Rust port against the
 upstream C reference **automatically**, on top of the curated 538-case envelope in
 `tests/vectors/` (see `HARNESS.md`). Complements, doesn't replace, the differential test suite.
-Scoped in [`../DIFFERENTIAL-FUZZING-SCOPE.md`](../DIFFERENTIAL-FUZZING-SCOPE.md).
 
 ## What it does
 
@@ -44,17 +43,17 @@ cargo +nightly fuzz run differential -- -max_total_time=60 -max_len=4096 fuzz/co
 
 ## Findings
 
-Ported two fixes over proactively from libogg-rs's differential-fuzz session (same bug classes,
-same root cause), before ever running the fuzzer here:
+Two harness-only parse-semantics gaps were closed before the first fuzz run, by auditing the
+op-script interpreter against `cref/_driver.c`'s exact C string handling:
 
 - **`atol()` used Rust's strict `str::parse`** instead of C's lenient leading-digit-run-then-stop
   semantics. `cref/_driver.c` parses every numeric field with real `atol()`.
-- Added the same helper (`c`-compatible `atol` in `driver_core.rs`) proactively.
+- Added the same helper (`c`-compatible `atol` in `driver_core.rs`).
 
 Then, on the actual first fuzz run:
 
-1. **~1,200 executions in — embedded-NUL truncation** (`src/driver_core.rs`, harness-only, same
-   class as libogg-rs finding #3's neighbor). `strtok` treats the op-script line as a
+1. **~1,200 executions in — embedded-NUL truncation** (`src/driver_core.rs`, harness-only).
+   `strtok` treats the op-script line as a
    NUL-terminated C string; an embedded `0x00` anywhere silently ends it there for every
    downstream C string function, but Rust strings can contain interior NULs freely. Fixed by
    truncating at the first NUL before tokenizing, in `driver_core.rs` only (matches what
@@ -76,15 +75,32 @@ Then, on the actual first fuzz run:
    driver's own inconsistent clamping. Fixed by clamping `maxpixels` itself (not just the
    derived buffer size) identically in `cref/_driver.c`, `cref/_fuzzlib_driver.c`, and
    `driver_core.rs` — re-verified 538/538 byte-identical against the pinned tarball after the
-   change (this is a change to the certified C reference and the certified Rust driver, unlike
-   libogg-rs's finding #5, which only touched the fuzz-only wrapper).
+   change (this is a change to the certified C reference and the certified Rust driver, not just
+   a fuzz-only wrapper).
 
-A subsequent 15-minute run was clean: **865,705 executions, ~960 exec/s, zero crashes.**
+## Soak results
 
-## Status (2026-07-18)
+The 4-hour multi-process soak (32 cores) across the IFD differential targets
+(`differential_dir` … `differential_dir5`, 4 libFuzzer processes each) plus the codec
+`differential` target is **reproducible**: two independent runs, each from a clean rebuild of the
+C reference off the pinned tarball, both landed in the **~7.6-billion-execution** range with
+**zero crashes and zero differential mismatches**.
 
-Built and validated, two harness-only findings fixed (above) — no bugs found in the certified
-codec decoders themselves (`lzw.rs`/`rle.rs`). Wired into CI (`fuzz-smoke`, 60s on every
-commit). Not yet run for the multi-hour depth the `fuzz_getimage` libtiff campaign used, and not
-yet wired into the pre-RFC gate (see "Process integration" in the scope doc for what that
-requires).
+| target | run 1 execs | run 2 execs |
+|---|---|---|
+| `differential_dir`  | 2,364,763,304 | 2,358,078,199 |
+| `differential_dir2` |   643,448,120 |   741,435,886 |
+| `differential_dir3` | 1,208,141,141 | 1,185,966,173 |
+| `differential_dir4` | 1,152,642,162 | 1,169,174,776 |
+| `differential_dir5` | 2,254,072,689 | 2,289,397,114 |
+| `differential` (codecs) | 14,046,039 | 13,273,681 |
+| **IFD total** | **~7.62 B** | **~7.74 B** |
+
+An earlier 15-minute single-process baseline was likewise clean (865,705 executions, ~960
+exec/s), as was a shorter 10-minute repro pass. Zero new artifacts across all runs.
+
+## Status
+
+Built and validated; two harness-only findings fixed (above) — no bugs found in the certified
+codec decoders themselves (`lzw.rs`/`rle.rs`) or across the multi-hour IFD soak. Wired into CI
+(`fuzz-smoke`, 60s on every commit); the long soak is run out-of-band before releases.
