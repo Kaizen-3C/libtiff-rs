@@ -55,7 +55,9 @@ complete observable output is byte-compared. Valid inputs are generated so the c
 well-formed where it claims to be and genuinely hostile (truncation, corruption, overflow triggers,
 pure-garbage fuzz) where it claims to be. `cargo test` replays the checked-in goldens; the `scripts/`
 harnesses rebuild the C reference from upstream and re-prove the differential (`regen_goldens.sh` for
-the codecs, in CI; `e2e_certify.sh` for the end-to-end decode).
+the codecs; `e2e_certify.sh` for the end-to-end decode) — **both run in CI on every commit**, the
+latter building a minimal static `libtiff` from the pinned tarball and byte-comparing its pixel
+output against this crate's.
 
 ## How the port handles the C structure
 
