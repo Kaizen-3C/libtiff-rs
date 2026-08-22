@@ -53,9 +53,11 @@ verbatim upstream C (re-sliced from the sha256-pinned `tiff-4.7.0.tar.gz`) and t
 driven by an identical op-script / structured-input harness over a declared envelope, and their
 complete observable output is byte-compared. Valid inputs are generated so the corpus is genuinely
 well-formed where it claims to be and genuinely hostile (truncation, corruption, overflow triggers,
-pure-garbage fuzz) where it claims to be. `cargo test` replays the checked-in goldens; the `scripts/`
-harnesses rebuild the C reference from upstream and re-prove the differential (`regen_goldens.sh` for
-the codecs, in CI; `e2e_certify.sh` for the end-to-end decode).
+pure-garbage fuzz) where it claims to be. `cargo test` replays the checked-in goldens. The `scripts/`
+harnesses rebuild the C reference from upstream and re-prove the differential — `regen_goldens.sh`
+for the codecs, `e2e_certify.sh` for the end-to-end decode. **Both run in CI on every commit.** The
+end-to-end job builds a minimal static `libtiff` from the pinned tarball and byte-compares its pixel
+output against this crate's.
 
 ## How the port handles the C structure
 

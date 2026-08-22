@@ -46,3 +46,18 @@ jobs:
         run: python3 fuzz/seed_corpus.py
       - name: fuzz for 60s — any crash or C/Rust divergence fails the job
         run: cargo +nightly fuzz run differential -- -max_total_time=60 -max_len=4096 fuzz/corpus/differential
+
+  e2e:
+    name: end-to-end decode vs real libtiff (built from the pinned tarball)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: install clang + cmake
+        run: sudo apt-get update && sudo apt-get install -y clang cmake
+      - name: extract the pinned libtiff tarball (e2e_certify.sh needs cref/_build/tiff-4.7.0)
+        run: bash scripts/regen_goldens.sh
+      - name: build a minimal static libtiff and byte-compare its pixels against the Rust decoder
+        run: bash scripts/e2e_certify.sh
+      - name: the regenerated golden must match the one checked in
+        run: git diff --exit-code tests/vectors/e2e_golden.txt
