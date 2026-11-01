@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end decode certification (Slice 6), re-provable from the pinned libtiff 4.7.0 source:
+# End-to-end decode check (Slice 6), re-provable from the pinned libtiff 4.7.0 source:
 #   1. build a minimal static libtiff.a (all optional codecs/deps OFF — core decode needs none)
 #   2. build the ORACLE (cref/_e2e_ref.c, links real libtiff) + the GENERATOR (cref/_e2e_gen.c)
 #   3. build the Rust decoder (bin e2e_decode, #![forbid(unsafe_code)])
@@ -66,5 +66,5 @@ done < "$BUILD/e2e_list.txt"
 
 echo "-----"
 echo "e2e decode: real libtiff == Rust — pass=$pass fail=$fail"
-[ "$fail" -eq 0 ] || { echo "CERTIFICATION FAILED"; exit 1; }
+[ "$fail" -eq 0 ] || { echo "DIFFERENTIAL CHECK FAILED"; exit 1; }
 echo "OK — golden refreshed at tests/vectors/e2e_golden.txt"

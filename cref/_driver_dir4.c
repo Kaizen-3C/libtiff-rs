@@ -1,4 +1,4 @@
-/* Op-script driver for the Long8 strip-array reader (Slice 4), for certification. One tag read per
+/* Op-script driver for the Long8 strip-array reader (Slice 4), for the differential check. One tag read per
    stdin line:  L <flags> <type> <count> <maxcount> <offsethex16> <filehex>
    flags: bit0 SWAB, bit1 BIGTIFF; offsethex16 = exactly 16 hex chars (8 raw tdir_offset bytes);
    filehex = tif_base bytes. Builds a TIFFDirEntry, calls TIFFReadDirEntryLong8ArrayWithLimit, prints

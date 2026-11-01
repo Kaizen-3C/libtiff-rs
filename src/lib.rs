@@ -1,7 +1,7 @@
 //! # libtiff-rs
 //!
 //! Memory-safe Rust ports of libtiff 4.7.0's codec-core decoders, each differentially
-//! certified byte-identical to the upstream C build (see README.md):
+//! checked byte-identical to the upstream C build (see README.md):
 //!   - [`lzw`]  : the LZW decoder (tif_lzw.c) — the 9-12-bit code-table decoder
 //!   - [`rle`]  : PackBits, Thunder, and NeXT (tif_packbits.c / tif_thunder.c / tif_next.c)
 //!
@@ -11,7 +11,7 @@
 #![forbid(unsafe_code)]
 // The decoders mirror upstream tif_*.c structure (goto state machines, `_TIFFmemcpy` byte
 // loops, index-based table init), which produces a few benign machine-generated patterns.
-// Each decoder is certified byte-identical to upstream; see README.
+// Each decoder is checked byte-identical to upstream; see README.
 #![allow(unused_assignments)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::ptr_arg)]

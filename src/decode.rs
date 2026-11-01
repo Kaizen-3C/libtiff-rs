@@ -1,14 +1,14 @@
 //! Minimal **end-to-end** TIFF decode (Slice 6): a real TIFF file's bytes → decoded pixel data,
-//! entirely in `#![forbid(unsafe_code)]` Rust, wiring together the already-certified pieces:
+//! entirely in `#![forbid(unsafe_code)]` Rust, wiring together the already-checked pieces:
 //!   header parse → [`dirread::fetch_directory`] (IFD structure, Slice 2)
 //!   → tag values via [`dirread::read_dir_entry_long8_array_with_limit`] (Slice 4, uniform for
 //!     scalars *and* the StripOffsets/StripByteCounts arrays)
-//!   → strip geometry ([`geometry`], Slice 5) → per-strip codec dispatch to the certified
+//!   → strip geometry ([`geometry`], Slice 5) → per-strip codec dispatch to the checked
 //!     PackBits / LZW / uncompressed decoders → assembled pixel buffer.
 //!
 //! Scope (the *minimal* end-to-end that proves the pipeline against real libtiff): classic TIFF,
 //! little- or big-endian, single-plane (PlanarConfig=1), 8-bit samples, Compression NONE / PackBits
-//! / LZW, single- or multi-strip. Certified byte-identical to `libtiff.a`'s `TIFFReadEncodedStrip`
+//! / LZW, single- or multi-strip. Checked byte-identical to `libtiff.a`'s `TIFFReadEncodedStrip`
 //! output over a generated envelope (see `cref/_e2e_ref.c`). Deliberately not yet: tiles, BigTIFF,
 //! predictors, sub-8-bit / >8-bit samples, planar-separate — those are the funded M2/M3 breadth.
 
@@ -149,7 +149,7 @@ pub fn decode_tiff(file: &[u8]) -> Result<DecodedImage, DecodeErr> {
     let strip_bytecounts = read_tag_values(&ctx, &entries, TAG_STRIPBYTECOUNTS)
         .ok_or(DecodeErr::MissingTag(TAG_STRIPBYTECOUNTS))?;
 
-    // Strip count from the certified geometry (Slice 5) — must agree with the array lengths.
+    // Strip count from the checked geometry (Slice 5) — must agree with the array lengths.
     let geom = Geometry {
         imagewidth: width,
         imagelength: length,
@@ -259,7 +259,7 @@ mod tests {
 
     /// A hand-built minimal classic little-endian uncompressed 2×2 8-bit grayscale TIFF, so the
     /// end-to-end path (header → IFD → tags → strip → pixels) has a `cargo test` check that needs no
-    /// C toolchain. The full byte-for-byte-vs-libtiff certification is `scripts/e2e_certify.sh`.
+    /// C toolchain. The full byte-for-byte-vs-libtiff check is `scripts/e2e_check.sh`.
     fn tiny_le_uncompressed() -> Vec<u8> {
         let mut f = Vec::new();
         f.extend_from_slice(b"II"); // little-endian

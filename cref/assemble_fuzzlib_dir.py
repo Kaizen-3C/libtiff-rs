@@ -1,7 +1,7 @@
 """Assemble `legacy_fuzzlib_dir.c`: the IFD shim (_prelude_dir.c) + the VERBATIM entry-reader slice
 (identical to assemble_dir.py, callee-before-caller order) + the in-process callable wrapper
 (_fuzzlib_driver_dir.c) instead of the op-script main() in _driver_dir.c. Used by fuzz/build.rs so
-the Slice-1 fuzz oracle is built from the same verbatim slice as the certified differential.
+the Slice-1 fuzz oracle is built from the same verbatim slice as the checked differential.
 
 Usage:  TIFF_SRC=<unpacked tiff-4.7.0/libtiff dir> OUT=<build dir> python cref/assemble_fuzzlib_dir.py
 """

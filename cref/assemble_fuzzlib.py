@@ -1,7 +1,7 @@
 """Assemble `legacy_fuzzlib.c`: the shim (_prelude.c) + VERBATIM decoder bodies sliced from
 upstream libtiff 4.7.0 (identical slice to assemble.py) + an in-process callable wrapper
 (_fuzzlib_driver.c) instead of the op-script main() in _driver.c. Used by the differential-fuzz
-build (fuzz/build.rs) so the fuzz oracle is built from the same verbatim slice as the certified
+build (fuzz/build.rs) so the fuzz oracle is built from the same verbatim slice as the checked
 `differential_driver`.
 
 Usage:  TIFF_SRC=<unpacked tiff-4.7.0/libtiff dir> OUT=<build dir> python cref/assemble_fuzzlib.py

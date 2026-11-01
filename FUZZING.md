@@ -63,8 +63,8 @@ Then, on the actual first fuzz run:
    which could shift where an argument starts on inputs containing `\v`/`\f`/NBSP/etc.
 
 2. **~3,770 executions in — Thunder `maxpixels`/buffer-size inconsistency** (`cref/_driver.c`
-   *and* `driver_core.rs`, a genuine harness-only bug present in **both** the certified C
-   reference and the certified Rust driver, not introduced by the fuzz work — it was already
+   *and* `driver_core.rs`, a genuine harness-only bug present in **both** the checked C
+   reference and the checked Rust driver, not introduced by the fuzz work — it was already
    there). The `T` (Thunder) op clamps the *allocated output buffer* to `MAXBUF` (1MB) but was
    passing the **unclamped** `maxpixels` straight through to `thunder_decode`/`ThunderDecode` —
    the parameter that tells the decoder how much room it has. A `maxpixels` around 7 billion
@@ -75,7 +75,7 @@ Then, on the actual first fuzz run:
    driver's own inconsistent clamping. Fixed by clamping `maxpixels` itself (not just the
    derived buffer size) identically in `cref/_driver.c`, `cref/_fuzzlib_driver.c`, and
    `driver_core.rs` — re-verified 538/538 byte-identical against the pinned tarball after the
-   change (this is a change to the certified C reference and the certified Rust driver, not just
+   change (this is a change to the checked C reference and the checked Rust driver, not just
    a fuzz-only wrapper).
 
 ## Soak results
@@ -101,6 +101,6 @@ exec/s), as was a shorter 10-minute repro pass. Zero new artifacts across all ru
 
 ## Status
 
-Built and validated; two harness-only findings fixed (above) — no bugs found in the certified
+Built and validated; two harness-only findings fixed (above) — no divergences found in the checked
 codec decoders themselves (`lzw.rs`/`rle.rs`) or across the multi-hour IFD soak. Wired into CI
 (`fuzz-smoke`, 60s on every commit); the long soak is run out-of-band before releases.

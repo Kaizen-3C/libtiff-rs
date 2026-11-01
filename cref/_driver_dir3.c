@@ -1,4 +1,4 @@
-/* Op-script driver for the value-array fetch (Slice 3), for certification. One tag read per stdin
+/* Op-script driver for the value-array fetch (Slice 3), for the differential check. One tag read per stdin
    line:  A <flags> <type> <count> <offsethex16> <filehex>
    flags: bit0 SWAB, bit1 BIGTIFF; offsethex16 = exactly 16 hex chars (8 raw tdir_offset bytes as the
    union holds them); filehex = tif_base bytes. Builds a TIFFDirEntry, calls

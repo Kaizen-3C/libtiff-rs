@@ -102,7 +102,7 @@ fn format_geom(nstrips: u32, ntiles: u32) -> String {
 
 /// Op-script line matching `cref/_driver_dir5.c`:
 /// `G <rowsperstrip> <imagelength> <imagewidth> <imagedepth> <planarconfig> <samplesperpixel>
-/// <tilewidth> <tilelength> <tiledepth>` → `G <nstrips> <ntiles>`. For certification.
+/// <tilewidth> <tilelength> <tiledepth>` → `G <nstrips> <ntiles>`. For the differential check.
 pub fn run_line_geom(line: &str) -> String {
     let line = match line.find('\0') {
         Some(p) => &line[..p],

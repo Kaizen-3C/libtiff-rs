@@ -1,4 +1,4 @@
-/* Op-script driver for strip/tile geometry counts (Slice 5), for certification. One geometry per
+/* Op-script driver for strip/tile geometry counts (Slice 5), for the differential check. One geometry per
    stdin line:
      G <rowsperstrip> <imagelength> <imagewidth> <imagedepth> <planarconfig> <samplesperpixel> \
        <tilewidth> <tilelength> <tiledepth>

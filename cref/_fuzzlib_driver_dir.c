@@ -1,5 +1,5 @@
 /* In-process callable wrapper over the IFD directory-entry reader (see _prelude_dir.c), for
-   differential fuzzing. Unlike the op-script _driver_dir.c (text, used for certification), the FUZZ
+   differential fuzzing. Unlike the op-script _driver_dir.c (text, used for the differential check), the FUZZ
    harness feeds STRUCTURED bytes so the differential exercises only the ported TIFFReadDirEntryByte
    LOGIC — not a text-parsing (sscanf vs Rust) mismatch between the two drivers. Both C and Rust
    interpret the same fuzz bytes identically:

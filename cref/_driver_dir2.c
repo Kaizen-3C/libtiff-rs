@@ -1,4 +1,4 @@
-/* Op-script driver for TIFFFetchDirectory (Slice 2), for certification. One directory parse per
+/* Op-script driver for TIFFFetchDirectory (Slice 2), for the differential check. One directory parse per
    stdin line:  F <diroff> <flags> <filehex>  (flags bit0=SWAB, bit1=BIGTIFF; filehex = tif_base).
    Output:  D <dircount> <nextdiroff>\n  then per entry  e <tag> <type> <count> <offset>\n  then . */
 
