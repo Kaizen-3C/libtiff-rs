@@ -1,4 +1,4 @@
-//! Differential certification replay: drives the crate's op-script driver over the full LZW
+//! Differential check replay: drives the crate's op-script driver over the full LZW
 //! envelope and byte-compares against golden output produced by the upstream libtiff 4.7.0 C
 //! reference build (see README.md / HARNESS.md for provenance).
 

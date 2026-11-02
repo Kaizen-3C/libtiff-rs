@@ -526,7 +526,7 @@ fn format_fetch(res: FetchResult) -> String {
 }
 
 /// Op-script line matching `cref/_driver_dir2.c`'s `sscanf(line, "F %llu %u %n", ...)`:
-/// `F <diroff> <flags> <filehex>` → the parsed directory. For certification.
+/// `F <diroff> <flags> <filehex>` → the parsed directory. For the differential check.
 pub fn run_line_fetch(line: &str) -> String {
     let line = match line.find('\0') {
         Some(p) => &line[..p],
@@ -816,7 +816,7 @@ fn format_arr(res: (DirEntryErr, Option<Vec<u8>>)) -> String {
 }
 
 /// Op-script line matching `cref/_driver_dir3.c`:
-/// `A <flags> <type> <count> <offsethex16> <filehex>` → the fetched byte array. For certification.
+/// `A <flags> <type> <count> <offsethex16> <filehex>` → the fetched byte array. For the differential check.
 pub fn run_line_arr(line: &str) -> String {
     let line = match line.find('\0') {
         Some(p) => &line[..p],

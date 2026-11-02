@@ -1,5 +1,5 @@
 //! libtiff 4.7.0 RLE-family codec decoders: PackBitsDecode (tif_packbits.c),
-//! ThunderDecode (tif_thunder.c), NeXTDecode (tif_next.c) — each ported and certified
+//! ThunderDecode (tif_thunder.c), NeXTDecode (tif_next.c) — each ported and checked
 //! byte-identical to upstream. See README for the differential methodology.
 
 // PackBits

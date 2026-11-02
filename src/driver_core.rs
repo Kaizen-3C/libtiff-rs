@@ -1,6 +1,6 @@
 //! The op-script interpreter shared by `src/bin/differential_driver.rs` (stdout) and the
 //! differential fuzz target (in-process, string return) — one implementation, two callers, so
-//! there's no risk of the fuzz oracle drifting from the certified driver. Mirrors
+//! there's no risk of the fuzz oracle drifting from the checked driver. Mirrors
 //! `cref/_driver.c`'s per-line dispatch; see `HARNESS.md` for the op-script format.
 
 use crate::{lzw_decode, next_decode_mem, packbits_decode, thunder_decode};

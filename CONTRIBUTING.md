@@ -1,7 +1,7 @@
 # Contributing to libtiff-rs
 
 Thanks for your interest. `libtiff-rs` is a memory-safe (`#![forbid(unsafe_code)]`) reimplementation
-of libtiff's TIFF decode path whose defining property is that it is **differentially certified
+of libtiff's TIFF decode path whose defining property is that it is **differentially checked
 byte-identical to the upstream C** — so the contribution bar is a little different from a typical
 crate: *behavior is measured against libtiff, not reviewed by opinion.* That discipline is also what
 keeps the project maintainable by more than one person — anyone can re-run the proof.
@@ -13,7 +13,7 @@ keeps the project maintainable by more than one person — anyone can re-run the
    byte-identical to the verbatim upstream C over the declared envelope. If you change behavior, you
    change it to match libtiff, and you show the differential still passes.
 3. **New behavior comes with new differential coverage.** If you add a codec, tag path, or geometry
-   case, add the corresponding vectors so the new surface is certified, not just exercised.
+   case, add the corresponding vectors so the new surface is checked, not just exercised.
 4. **Preserve the C's exact arithmetic.** libtiff relies on defined overflow/bounds behavior; the
    port mirrors it (`wrapping_*`, explicit guards) rather than letting Rust panic or silently differ.
 
@@ -25,7 +25,7 @@ cargo clippy --all-targets -- -D warnings
 cargo build --release
 cargo test --release            # replays the checked-in goldens in tests/vectors/
 bash scripts/regen_goldens.sh   # rebuilds the C reference from the pinned tarball and re-proves
-bash scripts/e2e_certify.sh     # proves the end-to-end decode byte-identical to a real libtiff
+bash scripts/e2e_check.sh     # proves the end-to-end decode byte-identical to a real libtiff
 ```
 
 Differential fuzzing (Linux/WSL; nightly + `cargo-fuzz`) is documented in `FUZZING.md`.

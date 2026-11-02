@@ -1,9 +1,9 @@
 //! libtiff 4.7.0 LZW decoder (LZWSetupDecode + LZWPreDecode + LZWDecode from tif_lzw.c),
-//! ported verbatim-in-behavior and certified byte-identical to upstream.
+//! ported verbatim-in-behavior and checked byte-identical to upstream.
 
 // The decode function mirrors upstream tif_lzw.c's goto-state-machine + code-table structure,
 // which produces a few benign machine-generated patterns (running-position dead stores across
-// labeled breaks, index-based table init). Certified byte-identical to upstream; see README.
+// labeled breaks, index-based table init). Checked byte-identical to upstream; see README.
 
 #[derive(Clone, Copy)]
 pub struct CodeEnt {

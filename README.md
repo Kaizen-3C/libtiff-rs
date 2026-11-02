@@ -5,17 +5,17 @@
 [![license: libtiff](https://img.shields.io/badge/license-libtiff-blue.svg)](LICENSE)
 
 A memory-safe Rust reimplementation of libtiff 4.7.0's **TIFF decode path**, built bottom-up and
-**differentially certified byte-identical to the upstream C** — not a clean-room rewrite, a proven
+**differentially checked byte-identical to the upstream C** — not a clean-room rewrite, a proven
 drop-in. The entire crate is **`#![forbid(unsafe_code)]`**.
 
-A real TIFF file decodes to pixels in safe Rust, byte-for-byte identical to what `libtiff` itself
+A TIFF file decodes to pixels in safe Rust, byte-for-byte identical to what `libtiff` itself
 produces (see **End-to-end decode** below). The pieces underneath — the codec decoders, the
-directory/IFD parser, and the strip geometry — are each certified against the verbatim upstream C
+directory/IFD parser, and the strip geometry — are each checked against the verbatim upstream C
 over an adversarial test envelope, re-provable from the sha256-pinned release.
 
-## What's implemented and certified
+## What's implemented and checked
 
-| Layer | Module | Certification (vs verbatim libtiff 4.7.0 C) |
+| Layer | Module | Differential check (vs the upstream libtiff 4.7.0 C) |
 |---|---|---|
 | **Codec decoders** — LZW (`tif_lzw.c`), PackBits/Thunder/NeXT (`tif_packbits`/`_thunder`/`_next.c`) | `lzw`, `rle` | **538/538** cases byte-identical; re-proven **in CI every commit** (`regen_goldens.sh`) |
 | **IFD entry readers** — typed value promotion + the offset/size-overflow & `tif_size` bounds core | `dirread` | **1692** cases byte-identical |
@@ -33,8 +33,8 @@ clean — zero crashes, zero differential mismatches, across independent runs (s
 ## End-to-end decode
 
 `decode::decode_tiff(&file_bytes)` parses a TIFF header, reads its directory, extracts the geometry
-and codec tags, reads each strip, and dispatches to the certified codec — producing the same pixel
-bytes `TIFFReadEncodedStrip` produces. `scripts/e2e_certify.sh` proves this from first principles: it
+and codec tags, reads each strip, and dispatches to the checked codec — producing the same pixel
+bytes `TIFFReadEncodedStrip` produces. `scripts/e2e_check.sh` proves this from first principles: it
 builds a minimal static `libtiff` from the pinned 4.7.0 source, decodes a matrix of generated TIFFs
 (little- and big-endian × uncompressed / PackBits / LZW × single-, multi-, and partial-strip
 layouts) with **both** the real library and this crate, and byte-compares. Current result: **12/12
@@ -46,7 +46,7 @@ end-to-end, the predictors (`tif_predict.c`), sub-8-bit / >8-bit samples, planar
 remaining codecs (e.g. CCITT fax) — the breadth that turns this from a proven core into a full
 production decoder.
 
-## Certification methodology
+## How the check works
 
 The crate was not reviewed into correctness — it was **measured** into it. For each layer, the
 verbatim upstream C (re-sliced from the sha256-pinned `tiff-4.7.0.tar.gz`) and the Rust port are
@@ -55,7 +55,7 @@ complete observable output is byte-compared. Valid inputs are generated so the c
 well-formed where it claims to be and genuinely hostile (truncation, corruption, overflow triggers,
 pure-garbage fuzz) where it claims to be. `cargo test` replays the checked-in goldens. The `scripts/`
 harnesses rebuild the C reference from upstream and re-prove the differential — `regen_goldens.sh`
-for the codecs, `e2e_certify.sh` for the end-to-end decode. **Both run in CI on every commit.** The
+for the codecs, `e2e_check.sh` for the end-to-end decode. **Both run in CI on every commit.** The
 end-to-end job builds a minimal static `libtiff` from the pinned tarball and byte-compares its pixel
 output against this crate's.
 
@@ -80,8 +80,8 @@ overflow guards and accept/reject/bounds behaviour on every input — with **zer
 - `src/dirread.rs` — the IFD directory/entry parser (readers, directory scan, value + strip arrays)
 - `src/geometry.rs` — strip/tile geometry counts
 - `src/decode.rs` — the end-to-end `decode_tiff` path
-- `src/bin/*` — the certification op-script drivers (each mirrors a `cref/_driver_*.c`)
+- `src/bin/*` — the differential op-script drivers (each mirrors a `cref/_driver_*.c`)
 - `cref/` — the C reference harnesses (minimal shims + `assemble*.py`, slicing the verbatim C from an
   upstream checkout) and the end-to-end oracle/generator (`_e2e_ref.c`, `_e2e_gen.c`)
-- `tests/vectors/` — the checked-in goldens · `scripts/` — `regen_goldens.sh`, `e2e_certify.sh`
+- `tests/vectors/` — the checked-in goldens · `scripts/` — `regen_goldens.sh`, `e2e_check.sh`
 - `fuzz/` — the coverage-guided differential fuzz targets (see `FUZZING.md`)
