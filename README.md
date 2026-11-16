@@ -10,7 +10,7 @@ drop-in. The entire crate is **`#![forbid(unsafe_code)]`**.
 
 A TIFF file decodes to pixels in safe Rust, byte-for-byte identical to what `libtiff` itself
 produces (see **End-to-end decode** below). The pieces underneath — the codec decoders, the
-directory/IFD parser, and the strip geometry — are each checked against the verbatim upstream C
+directory/IFD parser, and the strip geometry — are each checked against the unmodified upstream C
 over an adversarial test envelope, re-provable from the sha256-pinned release.
 
 ## What's implemented and checked
@@ -26,7 +26,7 @@ over an adversarial test envelope, re-provable from the sha256-pinned release.
 | **End-to-end decode** — header → directory → tags → strip read → codec → pixels | `decode` | **12/12** byte-identical **vs the real `libtiff`** |
 
 Every layer's differential is re-provable from the upstream tarball. The IFD and geometry surfaces
-are also hardened with coverage-guided **differential fuzzing** (safe Rust vs. verbatim C under
+are also hardened with coverage-guided **differential fuzzing** (safe Rust vs. unmodified C under
 AddressSanitizer); a reproducible 4-hour, ~7.6-billion-execution soak across the IFD surface ran
 clean — zero crashes, zero differential mismatches, across independent runs (see `FUZZING.md`).
 
@@ -49,7 +49,7 @@ production decoder.
 ## How the check works
 
 The crate was not reviewed into correctness — it was **measured** into it. For each layer, the
-verbatim upstream C (re-sliced from the sha256-pinned `tiff-4.7.0.tar.gz`) and the Rust port are
+unmodified upstream C (re-sliced from the sha256-pinned `tiff-4.7.0.tar.gz`) and the Rust port are
 driven by an identical op-script / structured-input harness over a declared envelope, and their
 complete observable output is byte-compared. Valid inputs are generated so the corpus is genuinely
 well-formed where it claims to be and genuinely hostile (truncation, corruption, overflow triggers,
@@ -81,7 +81,7 @@ overflow guards and accept/reject/bounds behaviour on every input — with **zer
 - `src/geometry.rs` — strip/tile geometry counts
 - `src/decode.rs` — the end-to-end `decode_tiff` path
 - `src/bin/*` — the differential op-script drivers (each mirrors a `cref/_driver_*.c`)
-- `cref/` — the C reference harnesses (minimal shims + `assemble*.py`, slicing the verbatim C from an
+- `cref/` — the C reference harnesses (minimal shims + `assemble*.py`, slicing the unmodified C from an
   upstream checkout) and the end-to-end oracle/generator (`_e2e_ref.c`, `_e2e_gen.c`)
 - `tests/vectors/` — the checked-in goldens · `scripts/` — `regen_goldens.sh`, `e2e_check.sh`
 - `fuzz/` — the coverage-guided differential fuzz targets (see `FUZZING.md`)
